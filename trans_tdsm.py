@@ -248,15 +248,9 @@ def diffusion_coeff(t, sigma=25.0):
     return torch.tensor(sigma**t, device=device)
 
 def main():
-    # For debugging gradient issues
-    #torch.autograd.set_detect_anomaly(True)
-
-    workingdir = os.path.abspath('.')
-
-    training_switch = 1
-    testing_switch = 0
-
+    
     print('torch version: ', torch.__version__)
+    workingdir = os.path.abspath('.')
     global device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('Running on device: ', device)
@@ -264,23 +258,28 @@ def main():
         print('Cuda used to build pyTorch: ',torch.version.cuda)
         print('Current device: ', torch.cuda.current_device())
         print('Cuda arch list: ', torch.cuda.get_arch_list())
+    # Useful when debugging gradient issues
+    #torch.autograd.set_detect_anomaly(True)
+
+    training_switch = 0
+    testing_switch = 1
+    plotting_switch = 0
 
     sigma = 25.0
     marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma)
     diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma)
 
-    filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/dataset_1_photons_1_graph.pt'
-    #filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/dataset_1_photons_2_graph.pt'
+    filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/dataset_2_1_graph_0.pt'
     loaded_file = torch.load(filename)
     point_clouds = loaded_file[0]
     print(f'Loading {len(point_clouds)} point clouds from file {filename}')
     energies = loaded_file[1]
-    custom_data = utils.cloud_dataset(point_clouds, energies,)
+    custom_data = utils.cloud_dataset(point_clouds, energies)
     load_n_clouds = 1
-    lr = 1e-4
-    n_epochs = 30
 
     if training_switch:
+        lr = 1e-4
+        n_epochs = 30
         av_losses_per_epoch = []
         output_directory = workingdir+'/training_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
         if not os.path.exists(output_directory):
@@ -300,7 +299,7 @@ def main():
             # Load clouds for each epoch of data dataloaders length will be the number of batches
             #point_clouds_loader = DataLoader(point_clouds,batch_size=load_n_clouds,shuffle=True)
             #energies_loader = DataLoader(energies,batch_size=load_n_clouds,shuffle=True)
-            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=True)
+            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
             print(f"epoch: {epoch}")
             cumulative_epoch_loss = 0.
             cloud_batch_losses = []
@@ -366,6 +365,26 @@ def main():
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
         
+        sample_batch_size = 100
+        model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=marginal_prob_std_fn)
+        load_name = workingdir+'training_20230223_1501_output/ckpt_tmp_29.pth'
+        model.load_state_dict(torch.load(load_name, map_location=device))
+        sampled_energies = sorted(energies[:])
+        sampled_energies = random.sample(sampled_energies, sample_batch_size)
+        sampled_energies = torch.tensor(sampled_energies) # Converting tensor from list of ndarrays is very slow (should convert to single ndarray first)
+        sampled_energies = torch.squeeze(sampled_energies)
+        print('sampled_energies: ', sampled_energies)
+        sampler = pc_sampler
+        # Get a sample of point clouds
+        samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, sample_batch_size, device=device)
+        print('Samples: ', samples.shape)
+
+
+    if plotting_switch == 1:
+        output_directory = workingdir+'/training_data_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
+        if not os.path.exists(output_directory):
+            os.makedirs(output_directory)
+
         # Make a simple plot of the total energy deposited by a shower in a given z layer
         point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
         cloud_features = CloudFeatures(point_clouds_loader)
@@ -373,11 +392,6 @@ def main():
         hits_means = cloud_features.calculate_mean_nhits()
         total_e_ = cloud_features.all_energies
         total_hits_ = cloud_features.all_hits
-
-        #print('hits_means: ', hits_means)
-        #print('energy_means: ', energy_means)
-        #print('total_e_: ', total_e_)
-        #print('total_hits_: ', total_hits_)
         
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
         plt.title('')
@@ -406,28 +420,13 @@ def main():
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
         plt.title('')
         plt.ylabel('Entries')
+        plt.yscale('log')
         plt.xlabel('# hits (per shower)')
         plt.hist(total_hits_, 20, label='Geant4')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'nhits_per_cloud.png')
-            
 
         
-        sample_batch_size = 100
-        model=Gen(4,20,128,3,1,0)
-        load_name = workingdir+'training_20230223_1538_output/ckpt_tmp_29.pth'
-        model.load_state_dict(torch.load(load_name, map_location=device))
-        sampled_energies = sorted(energies[:])
-        sampled_energies = random.sample(sampled_energies, sample_batch_size)
-        sampled_energies = torch.tensor(sampled_energies) # Converting tensor from list of ndarrays is very slow (should convert to single ndarray first)
-        sampled_energies = torch.squeeze(sampled_energies)
-        print('sampled_energies: ', sampled_energies)
-        sampler = pc_sampler
-        # Get a sample of point clouds
-        samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, sample_batch_size, device=device)
-        print('Samples: ', samples.shape)
-
-
 
 if __name__=='__main__':
     start = time.time()
