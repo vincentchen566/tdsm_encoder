@@ -361,14 +361,16 @@ def main():
         fig.savefig(output_directory+'loss_v_epoch.png')
     
     if testing_switch:
-        output_directory = workingdir+'/sampling_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
+        print(workingdir)
+        output_directory = os.path.join( workingdir, ('sampling_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'))
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
         
         sample_batch_size = 100
         model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=marginal_prob_std_fn)
-        load_name = workingdir+'training_20230223_1501_output/ckpt_tmp_29.pth'
+        load_name = os.path.join(workingdir,'training_20230223_1501_output/ckpt_tmp_29.pth')
         model.load_state_dict(torch.load(load_name, map_location=device))
+        # Get random incident energies
         sampled_energies = sorted(energies[:])
         sampled_energies = random.sample(sampled_energies, sample_batch_size)
         sampled_energies = torch.tensor(sampled_energies) # Converting tensor from list of ndarrays is very slow (should convert to single ndarray first)
@@ -378,7 +380,6 @@ def main():
         # Get a sample of point clouds
         samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, sample_batch_size, device=device)
         print('Samples: ', samples.shape)
-
 
     if plotting_switch == 1:
         output_directory = workingdir+'/training_data_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'

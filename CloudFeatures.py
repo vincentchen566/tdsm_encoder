@@ -36,6 +36,7 @@ class CloudFeatures:
         self.all_hits = []
         self.layers_mean_e = []
         self.layers_mean_h = []
+        
         for i, (cloud_data,injection_energy) in enumerate(point_clouds_loader,0):
             if i>100:
                 break
