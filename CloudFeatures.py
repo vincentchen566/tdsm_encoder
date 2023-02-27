@@ -38,7 +38,7 @@ class CloudFeatures:
         self.layers_mean_h = []
         
         for i, (cloud_data,injection_energy) in enumerate(point_clouds_loader,0):
-            if i>100:
+            if i>10:
                 break
             
             # Sum of the total energy deposited by a cloud per layer

@@ -6,7 +6,10 @@
 ```
 source /cvmfs/sft.cern.ch/lcg/views/LCG_102b_cuda/x86_64-centos7-gcc8-opt/setup.sh
 ```
-
+To check which versions are intalled with you python installation start a python session and run:
+```
+print(torch_geometric.__version__)
+```
 ## Conda
 Used conda pacakage installation and management tool to create new environment 'tdsbmodel' holding all required packages
 conda activate tdsbmodel
