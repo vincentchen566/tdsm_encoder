@@ -1,7 +1,6 @@
-import h5py
-import math
-import torch
+import h5py, math, torch
 from torch.utils.data import Dataset
+#from torch_geometric.data import Dataset
 
 class cloud_dataset(Dataset):
     def __init__(self, data, condition, transform=None):
@@ -17,6 +16,8 @@ class cloud_dataset(Dataset):
 
 class uniform_energy_sampler():
     def __init__ (self, filename, sample_batch_size):
+        ''' 
+        '''
         file_ = h5py.File(filename, 'r')
         self.energies = file_['incident_energies']
         self.min_energy = min(file_['incident_energies'][:])

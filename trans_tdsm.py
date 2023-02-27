@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch.optim import Adam
 import torchvision.transforms as transforms
 from torch_geometric.loader import DataLoader
+from torch_geometric.data import Data
 from torch.utils.data import Dataset
 
 class GaussianFourierProjection(nn.Module):
@@ -122,7 +123,7 @@ class Gen(nn.Module):
         self.marginal_prob_std = marginal_prob_std
 
     def forward(self, x, t, e, mask=None):
-        # Embed poisitional input
+        # Embed 4-vector input
         x = self.embed(x)
         
         # Add time embedding
@@ -130,8 +131,9 @@ class Gen(nn.Module):
         # Now need to get dimensions right
         x += self.dense1(embed_t_).clone()
 
-        # Add energy embedding
-        embed_e_ = self.act_sig( self.embed_t(e) )
+        # Add incident particle energy embedding
+        embed_e_ = self.embed_t(e)
+        embed_e_ = self.act_sig(embed_e_)
         # Now need to get dimensions right
         x += self.dense1(embed_e_).clone()
 
@@ -178,16 +180,21 @@ def loss_fn(model, x, injection_energy, marginal_prob_std , eps=1e-5):
         marginal_prob_std: A function that gives the standard deviation of the perturbation kernel
         eps: A tolerance value for numerical stability
     """
-    random_t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
+    print('x: ', x)
+    #random_t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
+    random_t = torch.rand(injection_energy.shape[0], device=x.device) * (1. - eps) + eps
     injection_energy = torch.squeeze(injection_energy,-1)
     z = torch.randn_like(x)
+    print('z: ', z.shape)
     std = marginal_prob_std(random_t)
+    print('std: ', std.shape)
     perturbed_x = x + z * std[:, None, None]
+    print('perturbed_x: ', perturbed_x)
     model_output = model(perturbed_x, random_t, injection_energy)
     cloud_loss = torch.sum( (model_output*std + z)**2, dim=(1,2))
     return cloud_loss
 
-def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energies, batch_size=1, snr=0.16, device='cuda', eps=1e-3):
+def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energies, sampled_hits, batch_size=1, snr=0.16, device='cuda', eps=1e-3):
     ''' Generate samples from score based models with Predictor-Corrector method
         Args:
         score_model: A PyTorch model that represents the time-dependent score-based model.
@@ -203,10 +210,10 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
         Returns:
             samples
     '''
-    num_steps=500
+    
+    num_steps=50
     t = torch.ones(batch_size, device=device)
-    # Currently setting to some number of hits
-    gen_n_hits = 289
+    gen_n_hits = int(sampled_hits.item())
     init_x = torch.randn(batch_size, gen_n_hits, 4, device=device) * marginal_prob_std(t)[:,None,None]
     time_steps = np.linspace(1., eps, num_steps)
     step_size = time_steps[0]-time_steps[1]
@@ -215,7 +222,6 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
          for time_step in time_steps:
             print(f"Sampler step: {time_step:.4f}")
             batch_time_step = torch.ones(batch_size,device=device) * time_step
-            
             # Sneaky bug fix (matrix multiplication in GaussianFourier projection doesnt like float64s)
             sampled_energies = sampled_energies.to(torch.float32)
             
@@ -261,8 +267,10 @@ def main():
     # Useful when debugging gradient issues
     #torch.autograd.set_detect_anomaly(True)
 
-    training_switch = 0
-    testing_switch = 1
+    print('Working directory: ' , workingdir)
+
+    training_switch = 1
+    testing_switch = 0
     plotting_switch = 0
 
     sigma = 25.0
@@ -272,10 +280,19 @@ def main():
     filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/dataset_2_1_graph_0.pt'
     loaded_file = torch.load(filename)
     point_clouds = loaded_file[0]
-    print(f'Loading {len(point_clouds)} point clouds from file {filename}')
     energies = loaded_file[1]
-    custom_data = utils.cloud_dataset(point_clouds, energies)
     load_n_clouds = 1
+    custom_data = utils.cloud_dataset(point_clouds, energies)
+    
+    '''test_loader = DataLoader(point_clouds,batch_size=load_n_clouds, shuffle=False)
+    print(f'Torch geometric DataLoader: {test_loader}')
+    for batch in test_loader:
+        print(f'Batch loading graphs: {batch}')
+        print(f'batch: {batch.batch}')'''
+
+    
+    print(f'Customised dataset: {custom_data}')    
+    print(f'Loading {len(point_clouds)} point clouds from file {filename}')
 
     if training_switch:
         lr = 1e-4
@@ -297,9 +314,13 @@ def main():
         batch_size = 200
         for epoch in range(0,n_epochs):
             # Load clouds for each epoch of data dataloaders length will be the number of batches
-            #point_clouds_loader = DataLoader(point_clouds,batch_size=load_n_clouds,shuffle=True)
-            #energies_loader = DataLoader(energies,batch_size=load_n_clouds,shuffle=True)
-            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
+            point_clouds_loader = DataLoader(custom_data, batch_size=load_n_clouds, shuffle=False)
+            print(f'DataLoader for custom dataset: {point_clouds_loader}')
+            
+            #for data in point_clouds_loader:
+            #    print(f'custom data: {data[0]}')
+            #    print(f'batch: {data[0].batch}')
+
             print(f"epoch: {epoch}")
             cumulative_epoch_loss = 0.
             cloud_batch_losses = []
@@ -345,6 +366,7 @@ def main():
             
             # Add the batch size just used to the total number of clouds
             av_losses_per_epoch.append(cumulative_epoch_loss/cloud_counter)
+
             # Save checkpoint file after each epoch
             torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
             print(f'End-of-epoch: average loss = {av_losses_per_epoch}')
@@ -361,30 +383,63 @@ def main():
         fig.savefig(output_directory+'loss_v_epoch.png')
     
     if testing_switch:
-        print(workingdir)
         output_directory = os.path.join( workingdir, ('sampling_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'))
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
         
-        sample_batch_size = 100
+        sample_batch_size = 1
         model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=marginal_prob_std_fn)
         load_name = os.path.join(workingdir,'training_20230223_1501_output/ckpt_tmp_29.pth')
         model.load_state_dict(torch.load(load_name, map_location=device))
-        # Get random incident energies
-        sampled_energies = sorted(energies[:])
-        sampled_energies = random.sample(sampled_energies, sample_batch_size)
-        sampled_energies = torch.tensor(sampled_energies) # Converting tensor from list of ndarrays is very slow (should convert to single ndarray first)
-        sampled_energies = torch.squeeze(sampled_energies)
-        print('sampled_energies: ', sampled_energies)
-        sampler = pc_sampler
-        # Get a sample of point clouds
-        samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, sample_batch_size, device=device)
-        print('Samples: ', samples.shape)
+
+        samples_ = []
+        injection_energies = []
+        for s_ in range(0,10):
+            print(f'Generating point cloud: {s_}')
+            # Get nhits for examples in input file
+            hit_lengths = [len(f.x) for f in point_clouds ]
+            # Get incident energies from input file
+            sampled_energies = [e_[0] for e_ in energies]
+            # Stack
+            e_h_comb = np.column_stack((sampled_energies,hit_lengths))
+            # Generate random number to sample an example energy and nhits
+            idx = np.random.randint(e_h_comb.shape[0], size=sample_batch_size)
+            sampled_e_h_ = e_h_comb[idx,:]
+            # Convert to tensors
+            sampled_energies = torch.tensor(sampled_e_h_[:,0])
+            injection_energies.append(sampled_e_h_[:,0].tolist())
+            sampled_hits = torch.tensor(sampled_e_h_[:,1])
+            # Initiate sampler
+            sampler = pc_sampler
+            # Generate a sample of point clouds
+            samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, sampled_hits, sample_batch_size, device=device)
+            samples = Data(x=torch.squeeze(samples))
+            samples_.append(samples)
+        
+        #print('samples_: ', samples_)
+        #print('injection_energies: ', injection_energies)
+        #samples_e_stack = np.column_stack((samples_,injection_energies))
+        torch.save([samples_,injection_energies], 'test_save.pt')
+
 
     if plotting_switch == 1:
         output_directory = workingdir+'/training_data_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
+
+        # Load generated image file
+        test_ge_filename ='test_save.pt'
+        load_test_file = torch.load(test_ge_filename)
+        test_data = load_test_file[0]
+        print('load_test_file[0]: ', test_data[0].x)
+        #print('load_test_file[1]: ', load_test_file[1])
+        custom_gendata = utils.cloud_dataset(load_test_file[0], load_test_file[1])
+        gen_point_clouds_loader = DataLoader(custom_gendata,batch_size=load_n_clouds,shuffle=False)
+        gen_cloud_features = CloudFeatures(gen_point_clouds_loader)
+        gen_energy_means = gen_cloud_features.calculate_mean_energies()
+        gen_hits_means = gen_cloud_features.calculate_mean_nhits()
+        gen_total_e_ = gen_cloud_features.all_energies
+        gen_total_hits_ = gen_cloud_features.all_hits
 
         # Make a simple plot of the total energy deposited by a shower in a given z layer
         point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
@@ -399,6 +454,7 @@ def main():
         plt.ylabel('Average deposited energy [GeV]')
         plt.xlabel('Layer number')
         plt.plot(energy_means, label='Geant4')
+        plt.plot(gen_energy_means, label='Gen')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'avE_per_layer.png')
 
@@ -407,6 +463,7 @@ def main():
         plt.ylabel('Average nhits [GeV]')
         plt.xlabel('Layer number')
         plt.plot(hits_means, label='Geant4')
+        plt.plot(gen_hits_means, label='Gen')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'avHits_per_layer.png')
 
@@ -415,6 +472,7 @@ def main():
         plt.ylabel('Entries')
         plt.xlabel('Deposited energy [GeV] (per shower)')
         plt.hist(total_e_, 20,label='Geant4')
+        plt.hist(gen_total_e_, 20,label='Gen')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'deposited_energy_per_cloud.png')
 
@@ -424,6 +482,7 @@ def main():
         plt.yscale('log')
         plt.xlabel('# hits (per shower)')
         plt.hist(total_hits_, 20, label='Geant4')
+        plt.hist(gen_total_hits_, 20, label='Gen')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'nhits_per_cloud.png')
 
