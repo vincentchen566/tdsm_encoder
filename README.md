@@ -172,3 +172,9 @@ How you order the dimensions of the input is important when passing to the trans
 ```
 [# batches, # points, # features]
 ```
+
+
+# Data Transformation
+Transforming the input data of your machine learning algorithm is often key to its success. Preprocessing data will often be one of the most time-consuming parts of the project. Custom transformations often necessary and finding the best one can prove incredibly helpful to the algorithm (see here for a nice visual explanation https://donaldpinckney.com/books/pytorch/book/ch2-linreg/2018-11-15-feature-scaling.html)
+
+Pytorch provides a suite of transformations ready to go as well as the functionality to compose your own custom transformations. We can write a custom transformation function as a callable class, rather than a simple function, so that the parameters of the transformation do not need to be passed every time it is called.

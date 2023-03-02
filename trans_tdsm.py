@@ -147,18 +147,18 @@ class Gen(nn.Module):
             x = layer(x, x_cls=x_cls, src_key_padding_mask=mask)
             # Should concatenate with the time embedding after each block?
 
-        return self.out(x) / self.marginal_prob_std(t)[:, None, None]
+        mean_ , std_ = self.marginal_prob_std(x,t)
+        
+        return self.out(mean_) / std_[:, None, None]
+        #return self.out(x) / self.marginal_prob_std(t)[:, None, None]
 
 """Set up the SDE"""
 def marginal_prob_std(t, sigma):
     """ 
-    Choosing the SDE: 
-        dx = sigma^t dw
-        t in [0,1]
-    Compute the standard deviation of: p_{0t}(x(t) | x(0))
+    Choose the SDE and for t in [0,1], compute the standard deviation of: p_{0t}(x(t) | x(0))
         Args:
-    t: A vector of time steps taken as random numbers sampled from uniform distribution [0,1)
-    sigma: The sigma in our SDE which we set in the code
+            t: A vector of time steps taken as random numbers sampled from uniform distribution [0,1)
+            sigma: The sigma in our SDE which we set in the code
   
     Returns:
         The standard deviation.
@@ -167,7 +167,7 @@ def marginal_prob_std(t, sigma):
     std = torch.sqrt( (sigma**(2 * t) - 1.) / 2. / np.log(sigma) ) 
     return std
 
-def loss_fn(model, x, injection_energy, marginal_prob_std , eps=1e-5):
+def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
     Denoising score matching
@@ -181,20 +181,21 @@ def loss_fn(model, x, injection_energy, marginal_prob_std , eps=1e-5):
         marginal_prob_std: A function that gives the standard deviation of the perturbation kernel
         eps: A tolerance value for numerical stability
     """
-    print('x: ', x)
-    #random_t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
-    random_t = torch.rand(injection_energy.shape[0], device=x.device) * (1. - eps) + eps
-    print('random_t: ', random_t)
-    injection_energy = torch.squeeze(injection_energy,-1)
+    
+    # Tensor of randomised conditional variable 'time' steps
+    random_t = torch.rand(incident_energies.shape[0], device=x.device) * (1. - eps) + eps
+    # Tensor of conditional variable incident energies 
+    incident_energies = torch.squeeze(incident_energies,-1)
+    # matrix of noise
     z = torch.randn_like(x)
-    print('z: ', z.shape)
-    std = marginal_prob_std(random_t)
-    print('std of diffusion: ', std)
-    print('diffusion matrix: ', z * std[:, None, None])
-    perturbed_x = x + z * std[:, None, None]
-    print('perturbed_x: ', perturbed_x)
-    model_output = model(perturbed_x, random_t, injection_energy)
-    cloud_loss = torch.sum( (model_output*std + z)**2, dim=(1,2))
+    # Sample from standard deviation of noise
+    mean_, std_ = marginal_prob_std(x,random_t)
+    # Add noise to input
+    perturbed_x = x + z * std_[:, None, None]
+    # Evaluate model
+    model_output = model(perturbed_x, random_t, incident_energies)
+    # Collect loss
+    cloud_loss = torch.sum( (model_output*std_[:,None,None] + z)**2, dim=(1,2))
     return cloud_loss
 
 def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energies, sampled_hits, batch_size=1, snr=0.16, device='cuda', eps=1e-3):
@@ -217,7 +218,10 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
     num_steps=100
     t = torch.ones(batch_size, device=device)
     gen_n_hits = int(sampled_hits.item())
-    init_x = torch.randn(batch_size, gen_n_hits, 4, device=device) * marginal_prob_std(t)[:,None,None]
+    #init_x = torch.randn(batch_size, gen_n_hits, 4, device=device) * marginal_prob_std(t)[:,None,None]
+    init_x = torch.randn(batch_size, gen_n_hits, 4, device=device) 
+    mean_,std_ =  marginal_prob_std(init_x,t)
+    init_x = init_x*std_[:,None,None]
     time_steps = np.linspace(1., eps, num_steps)
     step_size = time_steps[0]-time_steps[1]
     x = init_x
@@ -272,20 +276,27 @@ def main():
 
     print('Working directory: ' , workingdir)
 
-    training_switch = 0
+    input_feature_plots = 0
+    training_switch = 1
     testing_switch = 0
-    plotting_switch = 1
+    evaluation_plots_switch = 0
 
     sigma = 25.0
-    marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma)
+    #marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma)
+    vesde = utils.VESDE()
+    new_marginal_prob_std_fn = functools.partial(vesde.marginal_prob)
+
     diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma)
+    new_diffusion_coeff_fn = functools.partial(vesde.sde)
 
     filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/dataset_2_1_graph_0.pt'
     loaded_file = torch.load(filename)
     point_clouds = loaded_file[0]
-    energies = loaded_file[1]
+    incident_energies = loaded_file[1]
+
     load_n_clouds = 1
-    custom_data = utils.cloud_dataset(point_clouds, energies)
+    #custom_data = utils.cloud_dataset(point_clouds, incident_energies, transform=transforms.Compose([utils.rescale_energies(incident_energies)]))
+    custom_data = utils.cloud_dataset(point_clouds, incident_energies, transform=utils.rescale_energies())
     
     '''test_loader = DataLoader(point_clouds,batch_size=load_n_clouds, shuffle=False)
     print(f'Torch geometric DataLoader: {test_loader}')
@@ -297,9 +308,69 @@ def main():
     print(f'Customised dataset: {custom_data}')    
     print(f'Loading {len(point_clouds)} point clouds from file {filename}')
 
+    if input_feature_plots == 1:
+        output_directory = workingdir+'/feature_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
+        if not os.path.exists(output_directory):
+            os.makedirs(output_directory)
+
+        # Load input data
+        point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
+        all_x = []
+        all_y = []
+        all_z = []
+        all_e = []
+        all_incident_e = []
+        for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
+            for x in cloud_data.x:
+                all_e.append(x[0].item())
+                all_x.append(x[1].item())
+                all_y.append(x[2].item())
+                all_z.append(x[3].item())
+            all_incident_e.append(incident_energies.item())
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('')
+        plt.ylabel('# entries')
+        plt.xlabel('Hit energy / (incident energy * 1000)')
+        plt.hist(all_e, 200, range=(0,1), label='Geant4')
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'hit_energies.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('')
+        plt.ylabel('# entries')
+        plt.xlabel('Hit x position')
+        plt.hist(all_x, 50, label='Geant4')
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'hit_x.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('')
+        plt.ylabel('# entries')
+        plt.xlabel('Hit y position')
+        plt.hist(all_y, 50, label='Geant4')
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'hit_y.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('')
+        plt.ylabel('# entries')
+        plt.xlabel('Hit z position')
+        plt.hist(all_z, 89, range=(0, 44), label='Geant4')
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'hit_z.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('')
+        plt.ylabel('# entries')
+        plt.xlabel('Incident energies [MeV]')
+        plt.hist(all_incident_e, 50, label='Geant4')
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'hit_incident_e.png')
+
     if training_switch:
-        lr = 1e-4
-        n_epochs = 30
+        lr = 0.001
+        n_epochs = 40
         av_losses_per_epoch = []
         output_directory = workingdir+'/training_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
         if not os.path.exists(output_directory):
@@ -307,22 +378,19 @@ def main():
 
         # Size of the last dimension of the input must match the input to the embedding layer
         # First arg = number of features
-        model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=marginal_prob_std_fn)
+        #model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=marginal_prob_std_fn)
+        model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
         #for para_ in model.parameters():
         #    print('model parameters: ', para_)
 
         # Optimiser needs to know model parameters for to optimise
         optimiser = Adam(model.parameters(),lr=lr)
         
-        batch_size = 200
+        batch_size = 100
         for epoch in range(0,n_epochs):
             # Load clouds for each epoch of data dataloaders length will be the number of batches
-            point_clouds_loader = DataLoader(custom_data, batch_size=load_n_clouds, shuffle=False)
+            point_clouds_loader = DataLoader(custom_data, batch_size=load_n_clouds, shuffle=True)
             print(f'DataLoader for custom dataset: {point_clouds_loader}')
-            
-            #for data in point_clouds_loader:
-            #    print(f'custom data: {data[0]}')
-            #    print(f'batch: {data[0].batch}')
 
             print(f"epoch: {epoch}")
             cumulative_epoch_loss = 0.
@@ -330,23 +398,17 @@ def main():
             cloud_counter = 0
             batch_counter = 0
             # Load a cloud
-            for i, (cloud_data,injection_energy) in enumerate(point_clouds_loader,0):
-                #if batch_counter>5:
-                #    print(f'Done 5 batches, move to next epoch')
-                #    break
-                if i%100 == 0: print(f"Cloud: {i}")
+            for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
                 cloud_counter+=1
                 
                 if len(cloud_data.x) < 1:
                     print('Very few points in cloud: ', cloud_data.x)
                     continue
-                # Adds batch dimension to front of data (currently making batches of 1 cloud manually)
+                # Add batch dimension to front of data (currently making batches of 1 cloud manually)
                 input_data = torch.unsqueeze(cloud_data.x, 0)
 
-                # Calculate loss for for individual clouds
-                cloud_loss = loss_fn(model, input_data, injection_energy, marginal_prob_std_fn)
-                
-                # Collect losses of clouds in batch
+                # Calculate and collect loss for individual cloud
+                cloud_loss = loss_fn(model, input_data, incident_energies, new_marginal_prob_std_fn)
                 cloud_batch_losses.append( cloud_loss )
                 
                 # If # clouds reaches batch_size
@@ -361,7 +423,7 @@ def main():
                     # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
                     cloud_batch_loss_average.backward(retain_graph=True)
                     # add the batch mean loss * size of batch to cumulative loss
-                    cumulative_epoch_loss+=cloud_batch_loss_average.item()*batch_size
+                    cumulative_epoch_loss+=cloud_batch_loss_average.item()*len(cloud_batch_losses)
                     # Update value of x += -lr * x.grad
                     optimiser.step()
                     # Ensure batch losses list is cleared
@@ -369,10 +431,10 @@ def main():
             
             # Add the batch size just used to the total number of clouds
             av_losses_per_epoch.append(cumulative_epoch_loss/cloud_counter)
+            print(f'End-of-epoch: average loss = {av_losses_per_epoch}')
 
             # Save checkpoint file after each epoch
             torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
-            print(f'End-of-epoch: average loss = {av_losses_per_epoch}')
 
         print('plotting : ', av_losses_per_epoch)
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
@@ -391,19 +453,19 @@ def main():
             os.makedirs(output_directory)
         
         sample_batch_size = 10
-        model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=marginal_prob_std_fn)
-        load_name = os.path.join(workingdir,'training_20230223_1501_output/ckpt_tmp_29.pth')
+        model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
+        load_name = os.path.join(workingdir,'training_20230223_1501_nofrills/ckpt_tmp_29.pth')
         model.load_state_dict(torch.load(load_name, map_location=device))
 
         samples_ = []
-        injection_energies = []
+        in_energies = []
         
         for s_ in range(0,sample_batch_size):
             print(f'Generating point cloud: {s_}')
             # Get nhits for examples in input file
             hit_lengths = [len(f.x) for f in point_clouds ]
             # Get incident energies from input file
-            sampled_energies = [e_[0] for e_ in energies]
+            sampled_energies = [e_[0] for e_ in incident_energies]
             # Stack
             e_h_comb = np.column_stack((sampled_energies,hit_lengths))
             # Generate random number to sample an example energy and nhits
@@ -411,20 +473,19 @@ def main():
             sampled_e_h_ = e_h_comb[idx,:]
             # Convert to tensors
             sampled_energies = torch.tensor(sampled_e_h_[:,0])
-            injection_energies.append(sampled_e_h_[:,0].tolist())
+            in_energies.append(sampled_e_h_[:,0].tolist())
             sampled_hits = torch.tensor(sampled_e_h_[:,1])
             # Initiate sampler
             sampler = pc_sampler
             # Generate a sample of point clouds
-            samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, sampled_hits, 1, device=device)
+            samples = sampler(model, new_marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, sampled_hits, 1, device=device)
             samples = Data(x=torch.squeeze(samples))
             samples_.append(samples)
         
-        torch.save([samples_,injection_energies], output_directory+'generated_samples.pt')
+        torch.save([samples_,in_energies], output_directory+'generated_samples.pt')
 
-
-    if plotting_switch == 1:
-        output_directory = workingdir+'/training_data_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
+    if evaluation_plots_switch == 1:
+        output_directory = workingdir+'/evaluation_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
 

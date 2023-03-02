@@ -1,4 +1,4 @@
-executable              = /afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/calochall_homepage/scoremodel/condor_scripts/run_tdsm.sh
+executable              = /afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/condor_scripts/run_tdsm.sh
 output                  = run_tdsm.$(ClusterId).$(ProcId).out
 error                   = run_tdsm.$(ClusterId).$(ProcId).err
 log                     = run_tdsm.$(ClusterId).log
