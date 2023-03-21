@@ -1,23 +1,48 @@
-import h5py, math, torch
+import h5py, math, torch, fnmatch, os
 import numpy as np
 from torch_geometric.data import Data
 from torch.utils.data import Dataset
 #from torch_geometric.data import Dataset
 
 class cloud_dataset(Dataset):
-    def __init__(self, data, condition, transform=None):
-        self.data = data
-        self.condition = torch.LongTensor(condition)
-        self.transform = transform
-    def __getitem__(self, index):
-        x = self.data[index]
-        y = self.condition[index]
-        if self.transform:
-            x = self.transform(x,y)
-        return x,y
-    def __len__(self):
-        return len(self.data)
+  #def __init__(self, data, condition, transform=None):
+  def __init__(self, filename, transform=None, device='cpu'):
+    loaded_file = torch.load(filename, map_location=torch.device(device))
+    self.data = loaded_file[0]
+    #self.condition = torch.LongTensor(loaded_file[1]).to(device)
+    self.condition = torch.tensor(loaded_file[1], dtype=torch.long, device=torch.device(device))
+    self.transform = transform
+  def __getitem__(self, index):
+    x = self.data[index]
+    y = self.condition[index]
+    if self.transform:
+        x = self.transform(x,y)
+    return x,y
+  def __len__(self):
+    return len(self.data)
 
+class HitCloudDataset(Dataset):
+  def __init__(self, datafolder):
+    '''Inheriting from pytorch Dataset class
+    Loads each file lazily only when __getitem__ is
+    called. Returns all graphs in files which can
+    then be looped over during training.
+    '''
+    self.files_list = []
+    self.data_folder = datafolder
+    for filename in os.listdir(datafolder):
+      if fnmatch.fnmatch(filename, 'dataset_2_1_graph*.pt'):
+          self.files_list.append(os.path.join(datafolder,filename))
+    #with open(self.files_list, 'r') as f:
+    #  self.file_list = f.read().splitlines()
+  
+  def __len__(self):
+    return len(self.files_list)
+  
+  def __getitem__(self,idx):
+    filename = self.files_list[idx]
+    loaded_file = torch.load(filename)
+    return loaded_file
 
 class rescale_energies:
         '''Convert hit energies to range |01)
@@ -36,7 +61,6 @@ class rescale_energies:
             self.features = Data(x=stack_)
             
             return self.features
-
 
 class uniform_energy_sampler:
     def __init__ (self, filename, sample_batch_size):
@@ -57,11 +81,11 @@ class uniform_energy_sampler:
         return len(self.energy_samples)
 
     def __getitem__(self,idx):
-        energy_sample_ = self.energy_samples[ix]
+        energy_sample_ = self.energy_samples[idx]
         return energy_sample_
 
 class VESDE:
-  def __init__(self, sigma_min=0.01, sigma_max=50, N=1000):
+  def __init__(self, sigma_min=0.01, sigma_max=50, N=1000, device='cuda'):
     """Construct a Variance Exploding SDE.
     Args:
       sigma_min: smallest sigma.
@@ -74,7 +98,7 @@ class VESDE:
 
   def sde(self, x, t):
     sigma = self.sigma_min * (self.sigma_max / self.sigma_min) ** t
-    drift = torch.zeros_like(x)
+    drift = torch.zeros_like(x, device=x.device)
     diffusion = sigma * torch.sqrt(torch.tensor(2 * (np.log(self.sigma_max) - np.log(self.sigma_min)), device=t.device))
     return drift, diffusion
 
