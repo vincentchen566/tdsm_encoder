@@ -25,8 +25,6 @@ class CloudFeatures:
         for layer_ in range(0,self.num_layers):
             self.layers_sum_e[layer_].clear()
             self.layers_nhits[layer_].clear()
-
-        #self.total_energies_sum = 0
         
         # Individual cloud features
         cloud_hit_energies = []
