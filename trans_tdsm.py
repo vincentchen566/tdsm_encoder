@@ -288,8 +288,7 @@ def main():
     switches_ = int('0b'+args.switches,2)
     switches_str = bin(int('0b'+args.switches,2))
     trigger = 0b0001
-    print(f'switches_str: {switches_str}')
-    print(f'trigger: {trigger}')
+    print(f'switches trigger: {switches_str}')
     if switches_ & trigger:
         print('input_feature_plots = ON')
     if switches_>>1 & trigger:
@@ -337,10 +336,10 @@ def main():
         loaded_file = torch.load(filename)
         point_clouds = loaded_file[0]
         incident_energies = loaded_file[1]
-        
-        custom_data = utils.cloud_dataset(point_clouds, incident_energies, transform=utils.rescale_energies())
-        print(f'Customised dataset: {custom_data}')    
         print(f'Loading {len(point_clouds)} point clouds from file {filename}')
+
+        custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), transform_y=utils.rescale_conditional())
+        print(f'Customised dataset: {custom_data} (length {len(custom_data)})')
         output_directory = workingdir+'/feature_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
@@ -363,8 +362,8 @@ def main():
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
         plt.title('')
         plt.ylabel('# entries')
-        plt.xlabel('Hit energy / (incident energy * 1000)')
-        plt.hist(all_e, 200, range=(0,1), label='Geant4')
+        plt.xlabel('Transformed Hit energy')
+        plt.hist(all_e, 50, label='Geant4')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'hit_energies.png')
 
@@ -395,25 +394,34 @@ def main():
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
         plt.title('')
         plt.ylabel('# entries')
-        plt.xlabel('Incident energies [MeV]')
+        plt.xlabel('Transformed Incident energies')
         plt.hist(all_incident_e, 50, label='Geant4')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'hit_incident_e.png')
 
-    #if training_switch:
+    #### Training ####
     if switches_>>1 & trigger:
-        output_directory = workingdir+'/training_l_dim_gen_200_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
+        output_directory = workingdir+'/training_64embeddim_16_attheads_12_encoder_blocks_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
         print('Output directory: ', output_directory)
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
 
         load_n_clouds = 1
         lr = 0.0001
-        n_epochs = 50
+        n_epochs = 1000
+        #n_epochs = 4
         batch_size = 150
         # Size of the last dimension of the input must match the input to the embedding layer
         #model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
-        model=Gen(4, 200, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
+        
+        #n_dim = number of features
+        #l_dim_gen = dimensionality to embed input
+        #hidden_gen = dimensionaliy of hidden layer
+        #num_layers_gen = number of encoder blocks
+        #heads_gen = number of parallel attention heads to use
+        #dropout_gen = regularising layer
+        #marginal_prob_std = standard deviation of Gaussian perturbation captured by SDE
+        model=Gen(4, 64, 128, 12, 16, 0, marginal_prob_std=new_marginal_prob_std_fn)
         
         print('model: ', model)
         #for para_ in model.parameters():
@@ -422,47 +430,58 @@ def main():
         # Optimiser needs to know model parameters for to optimise
         optimiser = Adam(model.parameters(),lr=lr)
         
-        
-        av_losses_per_epoch = []
+        av_training_losses_per_epoch = []
+        av_testing_losses_per_epoch = []
         for epoch in range(0,n_epochs):
             print(f"epoch: {epoch}")
+            # Create/clear per epoch variables
             cumulative_epoch_loss = 0.
             cloud_batch_losses = []
+            test_batch_losses_per_file = []
+
             file_counter = 0
             cloud_counter = 0
             batch_counter = 0
             # Load files
+            #files_list_ = [files_list_[f] for f in range(0,1)]
             for filename in files_list_:
                 print(f'Training on file: {filename}')
                 file_counter+=1
-                #if file_counter>50:
-                #    continue
                 
+                # Resident set size memory (non-swap physical memory process has used)
                 process = psutil.Process(os.getpid())
-                print('Memory usage of current python process: ', process.memory_info().rss)
+                print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
+                #2312085504
+                #2187137024
 
-                custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(),device=device)
-                print(f'{len(custom_data.data)} clouds in file')
+                custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), device=device)
+                print(f'{len(custom_data)} showers in file')
+                
+                train_size = int(0.9 * len(custom_data.data))
+                test_size = len(custom_data.data) - train_size
+                train_dataset, test_dataset = torch.utils.data.random_split(custom_data, [train_size, test_size])
             
                 # Load clouds for each epoch of data dataloaders length will be the number of batches
-                point_clouds_loader = DataLoader(custom_data, batch_size=load_n_clouds, shuffle=True)
-                print(f'{len(point_clouds_loader)} batches in file')
+                #point_clouds_loader = DataLoader(custom_data, batch_size=load_n_clouds, shuffle=True)
+                point_clouds_loader_train = DataLoader(train_dataset, batch_size=load_n_clouds, shuffle=True)
+                print(f'{len(point_clouds_loader_train)} training showers')
+
+                point_clouds_loader_test = DataLoader(test_dataset, batch_size=load_n_clouds, shuffle=True)
+                print(f'{len(point_clouds_loader_test)} testing showers')
                 
-                # Load a cloud
-                for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
-                    
+                # Load a shower for training
+                for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader_train,0):
                     if len(cloud_data.x) < 1:
-                        print('Very few hits in cloud: ', cloud_data.x)
+                        print('Very few hits in shower: ', cloud_data.x)
                         continue
                     
                     cloud_counter+=1
-                    #if i>50:
+                    #if batch_counter>3:
                     #    continue
                     #    print(f'i: {i}')
 
                     # Add batch dimension to front of data (currently making batches of 1 cloud manually)
                     input_data = torch.unsqueeze(cloud_data.x, 0)
-                    #input_data.to(device)
 
                     # Calculate loss for individual cloud
                     cloud_loss = loss_fn(model, input_data, incident_energies, new_marginal_prob_std_fn, device=device)
@@ -472,7 +491,7 @@ def main():
                     # If # clouds reaches batch_size, backpropagate loss average
                     if i%batch_size == 0 and i>0:
                         batch_counter+=1
-                        print(f'Batch: {batch_counter} (cloud: {i})')
+                        print(f'Batch: {batch_counter} (shower: {i})')
                         # Average cloud loss in batch to backpropagate (could also use sum)
                         cloud_batch_loss_average = sum(cloud_batch_losses)/len(cloud_batch_losses)
                         print(f'Batch loss average: ', cloud_batch_loss_average.item())
@@ -486,26 +505,37 @@ def main():
                         optimiser.step()
                         # Ensure batch losses list is cleared
                         cloud_batch_losses.clear()
+            
+                # Testing on subset of file
+                for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader_test,0):
+                    with torch.no_grad():
+                        input_data = torch.unsqueeze(cloud_data.x, 0)
+                        test_loss = loss_fn(model, input_data, incident_energies, new_marginal_prob_std_fn, device=device)
+                        test_batch_losses_per_file.append( test_loss.item() )
                 
             # Add the batch size just used to the total number of clouds
-            av_losses_per_epoch.append(cumulative_epoch_loss/cloud_counter)
-            print(f'End-of-epoch: average loss = {av_losses_per_epoch}')
+            av_training_losses_per_epoch.append(cumulative_epoch_loss/cloud_counter)
+            av_testing_losses_per_epoch.append( sum(test_batch_losses_per_file)/len(test_batch_losses_per_file) )
+            print(f'End-of-epoch: average train loss = {av_training_losses_per_epoch}, average test loss = {av_testing_losses_per_epoch}')
             # Save checkpoint file after each epoch
             torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
 
-        av_losses_per_epoch = av_losses_per_epoch[1:]
-        print('plotting : ', av_losses_per_epoch)
+        av_training_losses_per_epoch = av_training_losses_per_epoch#[1:]
+        av_testing_losses_per_epoch = av_testing_losses_per_epoch#[1:]
+        print('Training losses : ', av_training_losses_per_epoch)
+        print('Testing losses : ', av_testing_losses_per_epoch)
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
         plt.title('')
         plt.ylabel('Loss')
         plt.xlabel('Epoch')
         plt.yscale('log')
-        plt.plot(av_losses_per_epoch, label='training')
+        plt.plot(av_training_losses_per_epoch, label='training')
+        plt.plot(av_testing_losses_per_epoch, label='testing')
         plt.legend(loc='upper right')
         plt.tight_layout()
         fig.savefig(output_directory+'loss_v_epoch.png')
     
-    #if testing_switch:
+    #### Sampling ####
     if switches_>>2 & trigger:    
         output_directory = workingdir+'/sampling_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
         if not os.path.exists(output_directory):
@@ -513,10 +543,12 @@ def main():
         
         sample_batch_size = 500
         #model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
-        model=Gen(4, 200, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
+        #model=Gen(4, 64, 128, 3, 16, 0, marginal_prob_std=new_marginal_prob_std_fn)
+        model=Gen(4, 20, 128, 6, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
 
         #load_name = os.path.join(workingdir,'training_20230315_1515_output/ckpt_tmp_29.pth')
-        #load_name = os.path.join(workingdir,'training_20230320_1846_output/ckpt_tmp_49.pth')
+        load_name = os.path.join(workingdir,'training_64embeddim_16_attheads_20230323_1129_output/ckpt_tmp_49.pth')
+        #load_name = os.path.join(workingdir,'training_6_encoder_blocks_20230322_1838_output/ckpt_tmp_49.pth')
 
         model.load_state_dict(torch.load(load_name, map_location=device))
         model.to(device)
@@ -526,18 +558,19 @@ def main():
         hits_lengths = []
         sampled_energies = []
         count_files = 0
-        # Use clouds from a sample of 30 files to generate a distribution of # hits
-        for filename in files_list_:
-            count_files+=1
-            if count_files>=30:
-                break
-            custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), device=device)
-            point_clouds_loader = DataLoader(custom_data, batch_size=1, shuffle=True)
+        # Use clouds from a sample of random files to generate a distribution of # hits
+        for idx_ in random.sample( range(0,len(files_list_)), 10):
+        #for filename in files_list_:
+            #count_files+=1
+            #if count_files>=30:
+            #    break
+            custom_data = utils.cloud_dataset(filename[idx_], transform=utils.rescale_energies(), device=device)
+            point_clouds_loader = DataLoader(custom_data, batch_size=1, shuffle=False)
             for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
                 # Get nhits for examples in input file
                 hits_lengths.append( len(cloud_data.x) )
                 # Get incident energies from input file
-                sampled_energies.append(incident_energies[0].item())
+                sampled_energies.append( incident_energies[0].item() )
         
         # Stack
         e_h_comb = np.column_stack((sampled_energies,hits_lengths))
@@ -559,95 +592,150 @@ def main():
         
         torch.save([samples_,in_energies], output_directory+'generated_samples.pt')
 
+    #### Evaluation plots ####
     if switches_>>3 & trigger:
-        output_directory = workingdir+'/evaluation_plots_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
+        output_directory = workingdir+'/evaluation_plots_64embeddim_16_attheads_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
         
-        # Load input data (just need example file for now)
-        custom_data = utils.cloud_dataset(files_list_[0], transform=utils.rescale_energies(),device=device)
-        point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
         # Initialise clouds with detector structure
         layer_list = []
-        for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
-            if i>10:
-                break
-            zlayers_ = cloud_data.x[:,3].tolist()
-            for x in zlayers_:
-                layer_list.append( x )
+        xbins_list = []
+        ybins_list = []
+        for idx_ in random.sample(range(0,len(files_list_)),1):
+            file = files_list_[idx_]
+            # Load input data (just need example file for now)
+            custom_data = utils.cloud_dataset(file,device=device)
+            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
+            for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
+                zlayers_ = cloud_data.x[:,3].tolist()
+                xbins_ = cloud_data.x[:,1].tolist()
+                ybins_ = cloud_data.x[:,2].tolist()
+                for z in zlayers_:
+                    layer_list.append( z )
+                for x in xbins_:
+                    xbins_list.append( x )
+                for y in ybins_:
+                    ybins_list.append( y )
         
-        layer_set = set([x for x in layer_list])
-        print(f'Detector layers: {layer_set}')
+        
+        layer_set = set([z for z in layer_list])
+        xbins_set = set([x for x in xbins_list])
+        ybins_set = set([y for y in ybins_list])
 
         # Initialise dictionaries to store per layer information
-        input_total_e_per_cloud = []
-        gen_total_e_per_cloud = []
-        input_total_h_per_cloud = []
-        gen_total_h_per_cloud = []
-        input_layers_mean_e = {}
-        gen_layers_mean_e = {}
-        input_layers_mean_h = {}
-        gen_layers_mean_h = {}
-        for layer_ in range(0,len(layer_set)):
-                input_layers_mean_e[layer_] = []
-                gen_layers_mean_e[layer_] = []
-                input_layers_mean_h[layer_] = []
-                gen_layers_mean_h[layer_] = []
-
-        for file in [files_list_[0], files_list_[1]]:
-            custom_data = utils.cloud_dataset(files_list_[0], transform=utils.rescale_energies())
-            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=True)
+        for idx_ in random.sample(range(0,len(files_list_)),1):
+            print('Input file idx_: ', idx_)
+            input_total_e_per_cloud = []
+            input_total_h_per_cloud = []
+            input_incident_e = []
+            input_layer0_e_in_cloud = []
+            input_layer0_nhits_in_cloud = []
+            input_layer10_e_in_cloud = []
+            input_layer10_nhits_in_cloud = []
+            input_layers_sum_e = {}
+            input_layers_nhits = {}
+            for layer_ in range(0,len(layer_set)):
+                input_layers_sum_e[layer_] = []
+                input_layers_nhits[layer_] = []
+                
+            file = files_list_[idx_]
+            #custom_data = utils.cloud_dataset(file, transform=utils.rescale_energies())
+            custom_data = utils.cloud_dataset(file, device=device)
+            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
             # Load each cloud and calculate desired quantity
             for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
+                input_incident_e.append(incident_energies.item())
                 cloud_features = CloudFeatures(layer_set)
                 cloud_features.basic_quantities(cloud_data, incident_energies)
                 input_total_e_per_cloud.append(cloud_features.total_energy)
                 input_total_h_per_cloud.append(cloud_features.n_hits)
-                # append each clouds deposited energy/hits per layer to lists
+                input_layer0_e_in_cloud.append(cloud_features.layers_sum_e.get(0)[0])
+                input_layer0_nhits_in_cloud.append(cloud_features.layers_nhits.get(0)[0])
+                input_layer10_e_in_cloud.append(cloud_features.layers_sum_e.get(10)[0])
+                input_layer10_nhits_in_cloud.append(cloud_features.layers_nhits.get(10)[0])
+                # append sum of each clouds deposited energy/hits per layer to lists
                 for layer_ in cloud_features.layer_set:
-                    input_layers_mean_e[layer_].append(cloud_features.layers_sum_e.get(layer_)[0])
-                    input_layers_mean_h[layer_].append(cloud_features.layers_nhits.get(layer_)[0])
+                    input_layers_sum_e[layer_].append(cloud_features.layers_sum_e.get(layer_)[0])
+                    input_layers_nhits[layer_].append(cloud_features.layers_nhits.get(layer_)[0])
         
+        print('# Geant4 showers: ', len(input_total_e_per_cloud))
+        # Get averages for all clouds in dataset
         input_layer_e_averages = []
         input_layer_n_hits_averages = []
         for layer_ in cloud_features.layer_set:
-            input_layer_e_averages.append(sum(input_layers_mean_e.get(layer_)) / len(input_layers_mean_e.get(layer_)))
-            input_layer_n_hits_averages.append(sum(input_layers_mean_h.get(layer_)) / len(input_layers_mean_h.get(layer_)))
+            sum_e_for_layer_across_clouds = sum(input_layers_sum_e.get(layer_))
+            sum_hits_for_layer_across_clouds = sum(input_layers_nhits.get(layer_))
+            n_clouds = len(input_layers_sum_e.get(layer_))
+            mean_e_for_layer = sum_e_for_layer_across_clouds/n_clouds
+            mean_n_hits_for_layer = sum_hits_for_layer_across_clouds/n_clouds
+            input_layer_e_averages.append( mean_e_for_layer )
+            input_layer_n_hits_averages.append( mean_n_hits_for_layer )
+        
+        
         
         # Load generated image file
-        #test_ge_filename = 'sampling_20230316_1155_output/generated_samples.pt'
-        test_ge_filename = 'sampling_20230321_1350_output/generated_samples.pt'
-        custom_gendata = utils.cloud_dataset(test_ge_filename, transform=utils.rescale_energies())
+        test_ge_filename = 'sampling_64embeddim_16_attheads_output/generated_samples.pt'
+        custom_gendata = utils.cloud_dataset(test_ge_filename, transform=utils.unscale_energies(), device=device)
+        #custom_gendata = utils.cloud_dataset(test_ge_filename, device=device)
         gen_point_clouds_loader = DataLoader(custom_gendata,batch_size=load_n_clouds,shuffle=False)
 
+        gen_total_e_per_cloud = []
+        gen_total_h_per_cloud = []
+        gen_incident_e = []
+        gen_layer0_e_in_cloud = []
+        gen_layer0_nhits_in_cloud = []
+        gen_layer10_e_in_cloud = []
+        gen_layer10_nhits_in_cloud = []
+        gen_layers_sum_e = {}
+        gen_layers_nhits = {}
+        for layer_ in range(0,len(layer_set)):
+                gen_layers_sum_e[layer_] = []
+                gen_layers_nhits[layer_] = []
+
         for i, (cloud_data,incident_energies) in enumerate(gen_point_clouds_loader,0):
+            gen_incident_e.append(incident_energies.item())
             gen_cloud_features = CloudFeatures(layer_set)
             gen_cloud_features.basic_quantities(cloud_data, incident_energies)
             gen_total_e_per_cloud.append(gen_cloud_features.total_energy)
             gen_total_h_per_cloud.append(gen_cloud_features.n_hits)
+            gen_layer0_e_in_cloud.append(gen_cloud_features.layers_sum_e.get(0)[0])
+            gen_layer0_nhits_in_cloud.append(gen_cloud_features.layers_nhits.get(0)[0])
+            gen_layer10_e_in_cloud.append(gen_cloud_features.layers_sum_e.get(10)[0])
+            gen_layer10_nhits_in_cloud.append(gen_cloud_features.layers_nhits.get(10)[0])
             # append each clouds deposited energy per layer to lists
             for layer_ in gen_cloud_features.layer_set:
-                gen_layers_mean_e[layer_].append(gen_cloud_features.layers_sum_e.get(layer_)[0])
-                gen_layers_mean_h[layer_].append(gen_cloud_features.layers_nhits.get(layer_)[0])
+                gen_layers_sum_e[layer_].append(gen_cloud_features.layers_sum_e.get(layer_)[0])
+                gen_layers_nhits[layer_].append(gen_cloud_features.layers_nhits.get(layer_)[0])
         
+        print('# generated showers: ', len(gen_total_e_per_cloud))
+
         gen_layer_e_averages = []
-        gen_layer_n_hits_averages = []        
+        gen_layer_n_hits_averages = []
         for layer_ in cloud_features.layer_set:
-            gen_layer_e_averages.append(sum(gen_layers_mean_e.get(layer_)) / len(gen_layers_mean_e.get(layer_)))
-            gen_layer_n_hits_averages.append(sum(gen_layers_mean_h.get(layer_)) / len(gen_layers_mean_h.get(layer_)))
+            sum_e_for_layer_across_clouds = sum(gen_layers_sum_e.get(layer_))
+            sum_hits_for_layer_across_clouds = sum(gen_layers_nhits.get(layer_))
+            n_clouds = len(gen_layers_sum_e.get(layer_))
+            mean_e_for_layer = sum_e_for_layer_across_clouds/n_clouds
+            mean_n_hits_for_layer = sum_hits_for_layer_across_clouds/n_clouds
+            gen_layer_e_averages.append(mean_e_for_layer)
+            gen_layer_n_hits_averages.append(mean_n_hits_for_layer)
+        
+        print('gen_layer_e_averages: ', gen_layer_e_averages)
+        print('gen_layer_n_hits_averages: ', gen_layer_n_hits_averages)
 
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-        plt.title('')
-        plt.ylabel('Average deposited energy [GeV]')
+        plt.title('Average deposited energy per layer')
+        plt.ylabel('Energy [GeV]')
         plt.xlabel('Layer number')
-        plt.plot(input_layer_e_averages, label='Geant4')
-        plt.plot(gen_layer_e_averages, label='Gen')
+        plt.plot([x/1000 for x in input_layer_e_averages], label='Geant4')
+        plt.plot([x/1000 for x in gen_layer_e_averages], label='Gen')
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'avE_per_layer.png')
 
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-        plt.title('')
-        plt.ylabel('Average nhits [GeV]')
+        plt.title('Average nhits per shower')
+        plt.ylabel('# hits')
         plt.xlabel('Layer number')
         plt.plot(input_layer_n_hits_averages, label='Geant4')
         plt.plot(gen_layer_n_hits_averages, label='Gen')
@@ -655,23 +743,71 @@ def main():
         fig.savefig(output_directory+'avHits_per_layer.png')
         
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-        plt.title('')
+        plt.title('Total deposited energy per cloud')
         plt.ylabel('Entries')
-        plt.xlabel('Hit energy / (incident energy * 1000)')
-        plt.hist(input_total_e_per_cloud, 200, range=(0,1), label='Geant4', alpha=0.5)
-        plt.hist(gen_total_e_per_cloud, 200, range=(0,1), label='Gen', alpha=0.5)
+        plt.xlabel('Energy [GeV]')
+        plt.yscale('log')
+        plt.hist([x/1000 for x in input_total_e_per_cloud], 10, range=(0,1000), label='Geant4', alpha=0.5)
+        plt.hist([x/1000 for x in gen_total_e_per_cloud], 10, range=(0,1000), label='Gen', alpha=0.5)
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'deposited_energy_per_cloud.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('Total deposited energy in layer 0 per cloud')
+        plt.ylabel('Entries')
+        plt.xlabel('Energy [GeV]')
+        plt.yscale('log')
+        plt.hist([x/1000 for x in input_layer0_e_in_cloud], 20, range=(0,40), label='Geant4', alpha=0.5)
+        plt.hist([x/1000 for x in gen_layer0_e_in_cloud], 20, range=(0,40), label='Gen', alpha=0.5)
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'deposited_energy_layer0_per_cloud.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('Total deposited energy in layer 10 per cloud')
+        plt.ylabel('Entries')
+        plt.xlabel('Energy [GeV]')
+        plt.yscale('log')
+        plt.hist([x/1000 for x in input_layer10_e_in_cloud], 50, range=(0,100), label='Geant4', alpha=0.5)
+        plt.hist([x/1000 for x in gen_layer10_e_in_cloud], 50, range=(0,100), label='Gen', alpha=0.5)
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'deposited_energy_layer10_per_cloud.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('# hits in layer 0 per cloud')
+        plt.ylabel('Entries')
+        plt.xlabel('# hits ')
+        plt.hist(input_layer0_nhits_in_cloud, 10, range=(0,100), label='Geant4', alpha=0.5)
+        plt.hist(gen_layer0_nhits_in_cloud, 10, range=(0,100), label='Gen', alpha=0.5)
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'nhits_layer0_per_cloud.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('# hits in layer 10 per cloud')
+        plt.ylabel('Entries')
+        plt.xlabel('# hits ')
+        plt.hist(input_layer10_nhits_in_cloud, 10, range=(0,300), label='Geant4', alpha=0.5)
+        plt.hist(gen_layer10_nhits_in_cloud, 10, range=(0,300), label='Gen', alpha=0.5)
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'nhits_layer10_per_cloud.png')
         
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-        plt.title('')
+        plt.title('Total # hits (per shower) [Sanity check]')
         plt.ylabel('Entries')
-        plt.yscale('log')
-        plt.xlabel('# hits (per shower)')
-        plt.hist(input_total_h_per_cloud, 20, range=(0,2000), label='Geant4', alpha=0.6)
-        plt.hist(gen_total_h_per_cloud, 20, range=(0,2000), label='Gen', alpha=0.6)
+        plt.xlabel('# hits')
+        plt.hist(input_total_h_per_cloud, 10, range=(0,5000), label='Geant4', alpha=0.6)
+        plt.hist(gen_total_h_per_cloud, 10, range=(0,5000), label='Gen', alpha=0.6)
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'nhits_per_cloud.png')
+
+        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+        plt.title('Incident Energies [Sanity check]')
+        plt.ylabel('Entries')
+        plt.xlabel('Energy [GeV]')
+        plt.yscale('log')
+        plt.hist([x/1000 for x in input_incident_e], 20, range=(0,1100), label='Geant4', alpha=0.6)
+        plt.hist([x/1000 for x in gen_incident_e], 20, range=(0,1100), label='Gen', alpha=0.6)
+        plt.legend(loc='upper right')
+        fig.savefig(output_directory+'incident_energies.png')
 
 if __name__=='__main__':
     start = time.time()

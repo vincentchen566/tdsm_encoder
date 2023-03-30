@@ -5,29 +5,35 @@ from torch.utils.data import Dataset
 #from torch_geometric.data import Dataset
 
 class cloud_dataset(Dataset):
-  #def __init__(self, data, condition, transform=None):
-  def __init__(self, filename, transform=None, device='cpu'):
+  def __init__(self, filename, transform=None, transform_y=None, device='cpu'):
     loaded_file = torch.load(filename, map_location=torch.device(device))
     self.data = loaded_file[0]
-    #self.condition = torch.LongTensor(loaded_file[1]).to(device)
     self.condition = torch.tensor(loaded_file[1], dtype=torch.long, device=torch.device(device))
     self.transform = transform
+    self.transform_y = transform_y
+    self.min_y = torch.min(self.condition)
+    self.max_y = torch.max(self.condition)
+    self.device = device
+
   def __getitem__(self, index):
     x = self.data[index]
     y = self.condition[index]
     if self.transform:
-        x = self.transform(x,y)
+        x = self.transform(x,y,self.device)
+    if self.transform_y:
+       y = self.transform_y(y, self.min_y, self.max_y)
     return x,y
+  
   def __len__(self):
     return len(self.data)
 
-class HitCloudDataset(Dataset):
+'''class HitCloudDataset(Dataset):
   def __init__(self, datafolder):
-    '''Inheriting from pytorch Dataset class
-    Loads each file lazily only when __getitem__ is
-    called. Returns all graphs in files which can
-    then be looped over during training.
-    '''
+    \'''Inheriting from pytorch Dataset class
+    #Loads each file lazily only when __getitem__ is
+    #called. Returns all graphs in files which can
+    #then be looped over during training.
+    \'''
     self.files_list = []
     self.data_folder = datafolder
     for filename in os.listdir(datafolder):
@@ -42,7 +48,17 @@ class HitCloudDataset(Dataset):
   def __getitem__(self,idx):
     filename = self.files_list[idx]
     loaded_file = torch.load(filename)
-    return loaded_file
+    return loaded_file'''
+
+class rescale_conditional:
+  '''Convert hit energies to range |01)
+  '''
+  def __init__(self):
+            pass
+  def __call__(self, conditional, emin, emax):
+     e0 = conditional
+     u0 = (e0-emin)/(emax-emin)
+     return u0
 
 class rescale_energies:
         '''Convert hit energies to range |01)
@@ -50,8 +66,11 @@ class rescale_energies:
         def __init__(self):
             pass
 
-        def __call__(self, features, condition):
-            rescaled_e = features.x[:,0]/(condition/1000)
+        def __call__(self, features, condition, device='cpu'):
+            Eprime = features.x[:,0]/(2*condition)
+            alpha = 1e-06
+            x = alpha+(1-(2*alpha))*Eprime
+            rescaled_e = torch.tensor([math.log( x_/(1-x_) ) for x_ in x], device=torch.device(device))
             x_ = features.x[:,1]
             y_ = features.x[:,2]
             z_ = features.x[:,3]
@@ -62,27 +81,23 @@ class rescale_energies:
             
             return self.features
 
-class uniform_energy_sampler:
-    def __init__ (self, filename, sample_batch_size):
-        ''' 
+class unscale_energies:
+        '''Undo conversion of hit energies to range |01)
         '''
-        file_ = h5py.File(filename, 'r')
-        self.energies = file_['incident_energies']
-        self.min_energy = min(file_['incident_energies'][:])
-        self.max_energy = max(file_['incident_energies'][:])
-        # Get (1 x sample_batch_size) matrix of numbers in uniform range [0,1)
-        sampled_energies_ = torch.rand(sample_batch_size)
-        # Produce numbers in the range [0, max_energy-min_energy)
-        energy_span = (self.max_energy-self.min_energy)
-        # Produce numbers uniformaly distributed between min and max
-        self.energy_samples = (energy_span[0] * sampled_energies_) + self.min_energy
+        def __init__(self):
+            pass
 
-    def __len__(self,idx):
-        return len(self.energy_samples)
-
-    def __getitem__(self,idx):
-        energy_sample_ = self.energy_samples[idx]
-        return energy_sample_
+        def __call__(self, features, condition):
+            rescaled_e = features.x[:,0]*(condition)
+            x_ = features.x[:,1]
+            y_ = features.x[:,2]
+            z_ = features.x[:,3]
+            
+            # Stack tensors along the 'hits' dimension -1 
+            stack_ = torch.stack((rescaled_e,x_,y_,z_), -1)
+            self.features = Data(x=stack_)
+            
+            return self.features
 
 class VESDE:
   def __init__(self, sigma_min=0.01, sigma_max=50, N=1000, device='cuda'):
