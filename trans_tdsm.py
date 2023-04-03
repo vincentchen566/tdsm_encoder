@@ -10,6 +10,7 @@ import torchvision.transforms as transforms
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from torch.utils.data import Dataset
+import torch.multiprocessing as mp
 
 class GaussianFourierProjection(nn.Module):
     """Gaussian random features for encoding time steps"""
@@ -171,8 +172,11 @@ class Gen(nn.Module):
             # Should concatenate with the time embedding after each block?
 
         mean_ , std_ = self.marginal_prob_std(x,t)
-        return self.out(mean_) / std_[:, None, None]
+        std_1d = std_[:, None, None]
+        output = self.out(mean_) / std_1d
+        return output 
 
+#def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='cpu'):
 def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='cpu'):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
@@ -299,16 +303,17 @@ def main():
         print('evaluation_plots_switch = ON')
 
     print('torch version: ', torch.__version__)
-    #workingdir = os.path.abspath('.')
-    global device
+
+    #global device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('Running on device: ', device)
     if torch.cuda.is_available():
         print('Cuda used to build pyTorch: ',torch.version.cuda)
         print('Current device: ', torch.cuda.current_device())
         print('Cuda arch list: ', torch.cuda.get_arch_list())
+    
     # Useful when debugging gradient issues
-    #torch.autograd.set_detect_anomaly(True)
+    torch.autograd.set_detect_anomaly(True)
 
     print('Working directory: ' , workingdir)
     
@@ -323,13 +328,8 @@ def main():
     files_list_ = []
     for filename in os.listdir(training_file_path):
         if fnmatch.fnmatch(filename, 'dataset_2_1_graph*.pt'):
+        #if fnmatch.fnmatch(filename, 'dataset_1_photons_*.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
-    
-    '''test_loader = DataLoader(point_clouds,batch_size=load_n_clouds, shuffle=False)
-    print(f'Torch geometric DataLoader: {test_loader}')
-    for batch in test_loader:
-        print(f'Batch loading graphs: {batch}')
-        print(f'batch: {batch.batch}')'''
 
     if switches_ & trigger:
         filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/dataset_2_1_graph_0.pt'
@@ -409,21 +409,16 @@ def main():
         load_n_clouds = 1
         lr = 0.0001
         n_epochs = 1000
-        #n_epochs = 4
         batch_size = 150
-        # Size of the last dimension of the input must match the input to the embedding layer
-        #model=Gen(4, 20, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
         
-        #n_dim = number of features
-        #l_dim_gen = dimensionality to embed input
-        #hidden_gen = dimensionaliy of hidden layer
-        #num_layers_gen = number of encoder blocks
-        #heads_gen = number of parallel attention heads to use
-        #dropout_gen = regularising layer
-        #marginal_prob_std = standard deviation of Gaussian perturbation captured by SDE
         model=Gen(4, 64, 128, 12, 16, 0, marginal_prob_std=new_marginal_prob_std_fn)
-        
         print('model: ', model)
+        if torch.cuda.device_count() > 1:
+            print(f'Lets us: {torch.cuda.device_count()} GPUs!')
+            model = nn.DataParallel(model)
+        
+        model.to(device)
+
         #for para_ in model.parameters():
         #    print('model parameters: ', para_)
 
@@ -443,37 +438,39 @@ def main():
             cloud_counter = 0
             batch_counter = 0
             # Load files
-            #files_list_ = [files_list_[f] for f in range(0,1)]
+            files_list_ = [files_list_[f] for f in range(0,1)]
+            # For debugging purposes
+            #files_list_ = ['toy_model.pt']
+            files_list_ = files_list_[:20]
             for filename in files_list_:
-                print(f'Training on file: {filename}')
+                #print(f'Training on file: {filename}')
                 file_counter+=1
                 
                 # Resident set size memory (non-swap physical memory process has used)
                 process = psutil.Process(os.getpid())
-                print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
-                #2312085504
-                #2187137024
+                #print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
 
                 custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), device=device)
-                print(f'{len(custom_data)} showers in file')
+                #print(f'{len(custom_data)} showers in file')
                 
                 train_size = int(0.9 * len(custom_data.data))
                 test_size = len(custom_data.data) - train_size
                 train_dataset, test_dataset = torch.utils.data.random_split(custom_data, [train_size, test_size])
+                print(f'train_dataset: {len(train_dataset)} showers')
             
                 # Load clouds for each epoch of data dataloaders length will be the number of batches
-                #point_clouds_loader = DataLoader(custom_data, batch_size=load_n_clouds, shuffle=True)
-                point_clouds_loader_train = DataLoader(train_dataset, batch_size=load_n_clouds, shuffle=True)
-                print(f'{len(point_clouds_loader_train)} training showers')
-
-                point_clouds_loader_test = DataLoader(test_dataset, batch_size=load_n_clouds, shuffle=True)
-                print(f'{len(point_clouds_loader_test)} testing showers')
+                point_clouds_loader_train = DataLoader(train_dataset, batch_size=load_n_clouds, shuffle=True, num_workers=2, pin_memory=True)
+                #print(f'{len(point_clouds_loader_train)} training showers')
+                point_clouds_loader_test = DataLoader(test_dataset, batch_size=load_n_clouds, shuffle=True, num_workers=2, pin_memory=True)
+                #print(f'{len(point_clouds_loader_test)} testing showers')
                 
                 # Load a shower for training
                 for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader_train,0):
                     if len(cloud_data.x) < 1:
                         print('Very few hits in shower: ', cloud_data.x)
                         continue
+
+                    print(f'Shower: {i}, nhits: {len(cloud_data.x)}')
                     
                     cloud_counter+=1
                     #if batch_counter>3:
@@ -485,16 +482,17 @@ def main():
 
                     # Calculate loss for individual cloud
                     cloud_loss = loss_fn(model, input_data, incident_energies, new_marginal_prob_std_fn, device=device)
+
                     # Add clouds loss to accumulating batch loss
                     cloud_batch_losses.append( cloud_loss )
                     
                     # If # clouds reaches batch_size, backpropagate loss average
                     if i%batch_size == 0 and i>0:
                         batch_counter+=1
-                        print(f'Batch: {batch_counter} (shower: {i})')
+                        #print(f'Batch: {batch_counter} (shower: {i})')
                         # Average cloud loss in batch to backpropagate (could also use sum)
                         cloud_batch_loss_average = sum(cloud_batch_losses)/len(cloud_batch_losses)
-                        print(f'Batch loss average: ', cloud_batch_loss_average.item())
+                        #print(f'Batch loss average: ', cloud_batch_loss_average.item())
                         # Zero any gradients from previous steps
                         optimiser.zero_grad()
                         # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
@@ -566,6 +564,7 @@ def main():
             #    break
             custom_data = utils.cloud_dataset(filename[idx_], transform=utils.rescale_energies(), device=device)
             point_clouds_loader = DataLoader(custom_data, batch_size=1, shuffle=False)
+            
             for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
                 # Get nhits for examples in input file
                 hits_lengths.append( len(cloud_data.x) )
@@ -607,6 +606,7 @@ def main():
             # Load input data (just need example file for now)
             custom_data = utils.cloud_dataset(file,device=device)
             point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
+
             for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
                 zlayers_ = cloud_data.x[:,3].tolist()
                 xbins_ = cloud_data.x[:,1].tolist()
@@ -679,6 +679,7 @@ def main():
         custom_gendata = utils.cloud_dataset(test_ge_filename, transform=utils.unscale_energies(), device=device)
         #custom_gendata = utils.cloud_dataset(test_ge_filename, device=device)
         gen_point_clouds_loader = DataLoader(custom_gendata,batch_size=load_n_clouds,shuffle=False)
+
 
         gen_total_e_per_cloud = []
         gen_total_h_per_cloud = []
@@ -808,6 +809,7 @@ def main():
         plt.hist([x/1000 for x in gen_incident_e], 20, range=(0,1100), label='Gen', alpha=0.6)
         plt.legend(loc='upper right')
         fig.savefig(output_directory+'incident_energies.png')
+
 
 if __name__=='__main__':
     start = time.time()

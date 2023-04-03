@@ -49,16 +49,37 @@ matplotlib
 
 # Condor
 ## Running Jobs on Condor
-Note the condor scripts available in the condor_scripts directory allow one to submit jobs to run on CERNs lxplus farm remotely. By default, the job will get one slot of a CPU core with 2GB of memory and 20GB of disk space. You can ask for more CPUs and/or memory but the system will scale thje number of CPUs you receive to respect the 2GB per core limit.
+Note the condor scripts available in the condor_scripts directory allow one to submit jobs to run on CERNs lxplus farm remotely. You can ask for more CPUs and/or memory but the system will scale the number of CPUs you receive to respect the 2GB per core limit.
 
 To ask for more CPUs, alter N in the following command in the submission script:
 ```
 request_CPUs = N
 ```
-One can request GPU functionality using:
+By default, the job will get one slot on a single CPU core with 2GB of (RAM) memory and 20GB of disk space. You can see the portion of memory that is occupied by a process that is held in the main RAM memory by checking the resident set size (RSS). Currently, jobs seem to be close to the limit (~2GB) so sometimes we get memory warning/failures. (numbers reutned by memory_info are expressed in bytes. We divide them to get number in GB)
+
+## Priority
+Check real priority with
 ```
-request_GPUs = 2
+condor_userprio -all
 ```
+0.5 is best possible value. The higher, the worse. User with priority 10 will get twice as many machines as a user with priority 20.
+
+## Monitoring jobs
+A very useful command to monitor jobs that perhaps don't run, start to run and stop, or get held etc. (i.e. don't fail but don't succeed) is:
+```
+condor_q -better -analyze <jobid>
+```
+If the problem was that the environment/machine specs you've asked for just don't exist, this is where you'll find the proof.
+
+## Running on GPUs
+GPU resources are available through HTCondor. One can simply add the folowing line to the submission script:
+```
+request_GPUs = N
+```
+You can request < 5 slots on a GPU core (not sure it's possible to request multiple different machines?). Pytorch has built in methods for parrellising processes. DataParrallel is a single process multi-thread parrallelism that requires minimal extra code. DistributedDataParrallel is a multi-process parrallelism that can work on different machines by grouping DDP instances together under a group ID. It is faster and scalable and incredibly useful if you have several GPU machines
+
+Careful when requesting several GPU. After considering machines only with more than one slot, that are accessible in the longer queues etc you may not have many options and might be waiting a while to get on a machine that can run your job.
+
 
 # Datasets
 Taking datasets from calochallenge atm. See calochallenge page for where to download datasets from.
