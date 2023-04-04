@@ -7,10 +7,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
 import torchvision.transforms as transforms
-from torch_geometric.loader import DataLoader
+#from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import torch.multiprocessing as mp
+#import wandb
 
 class GaussianFourierProjection(nn.Module):
     """Gaussian random features for encoding time steps"""
@@ -317,19 +318,21 @@ def main():
 
     print('Working directory: ' , workingdir)
     
-    load_n_clouds = 1
+    batch_size = 5
     sigma = 25.0
     vesde = utils.VESDE(device=device)
     new_marginal_prob_std_fn = functools.partial(vesde.marginal_prob)
     new_diffusion_coeff_fn = functools.partial(vesde.sde)
 
     # List of training input files
-    training_file_path = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/'
+    #training_file_path = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/'
+    training_file_path = './datasets/'
     files_list_ = []
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'dataset_2_1_graph*.pt'):
-        #if fnmatch.fnmatch(filename, 'dataset_1_photons_*.pt'):
+        #if fnmatch.fnmatch(filename, 'dataset_2_1_graph*.pt'):
+        if fnmatch.fnmatch(filename, 'padded_dataset_2_1_graph*.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
+    
 
     if switches_ & trigger:
         filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/dataset_2_1_graph_0.pt'
@@ -345,14 +348,14 @@ def main():
             os.makedirs(output_directory)
 
         # Load input data
-        point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
+        point_clouds_loader = DataLoader(custom_data,batch_size=batch_size,shuffle=False)
         all_x = []
         all_y = []
         all_z = []
         all_e = []
         all_incident_e = []
-        for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
-            for x in cloud_data.x:
+        for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
+            for x in shower_data.x:
                 all_e.append(x[0].item())
                 all_x.append(x[1].item())
                 all_y.append(x[2].item())
@@ -406,10 +409,24 @@ def main():
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
 
-        load_n_clouds = 1
+        batch_size = 10
         lr = 0.0001
-        n_epochs = 1000
-        batch_size = 150
+        n_epochs = 10
+        '''if tracking_ == True:
+            if sweep_ == True:
+                run_ = wandb.init()
+                print('Running sweep!')
+                # note that we define values from `wandb.config` instead of defining hard values
+                lr  =  wandb.config.lr
+                batch_size = wandb.config.batch_size
+                n_epochs = wandb.config.epochs
+            else:
+                run_ = wandb.init()
+                print('Tracking!')
+                lr  =  wandb.config.lr
+                batch_size = wandb.config.batch_size
+                n_epochs = wandb.config.epochs'''
+
         
         model=Gen(4, 64, 128, 12, 16, 0, marginal_prob_std=new_marginal_prob_std_fn)
         print('model: ', model)
@@ -431,27 +448,24 @@ def main():
             print(f"epoch: {epoch}")
             # Create/clear per epoch variables
             cumulative_epoch_loss = 0.
-            cloud_batch_losses = []
             test_batch_losses_per_file = []
 
             file_counter = 0
             cloud_counter = 0
-            batch_counter = 0
             # Load files
             files_list_ = [files_list_[f] for f in range(0,1)]
             # For debugging purposes
-            #files_list_ = ['toy_model.pt']
-            files_list_ = files_list_[:20]
+            files_list_ = files_list_[:1]
+            
             for filename in files_list_:
-                #print(f'Training on file: {filename}')
                 file_counter+=1
                 
                 # Resident set size memory (non-swap physical memory process has used)
-                process = psutil.Process(os.getpid())
+                #process = psutil.Process(os.getpid())
                 #print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
 
                 custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), device=device)
-                #print(f'{len(custom_data)} showers in file')
+                print(f'{len(custom_data)} showers in file')
                 
                 train_size = int(0.9 * len(custom_data.data))
                 test_size = len(custom_data.data) - train_size
@@ -459,58 +473,44 @@ def main():
                 print(f'train_dataset: {len(train_dataset)} showers')
             
                 # Load clouds for each epoch of data dataloaders length will be the number of batches
-                point_clouds_loader_train = DataLoader(train_dataset, batch_size=load_n_clouds, shuffle=True, num_workers=2, pin_memory=True)
-                #print(f'{len(point_clouds_loader_train)} training showers')
-                point_clouds_loader_test = DataLoader(test_dataset, batch_size=load_n_clouds, shuffle=True, num_workers=2, pin_memory=True)
-                #print(f'{len(point_clouds_loader_test)} testing showers')
+                shower_loader_train = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
+                shower_loader_test = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
                 
                 # Load a shower for training
-                for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader_train,0):
-                    if len(cloud_data.x) < 1:
-                        print('Very few hits in shower: ', cloud_data.x)
-                        continue
+                for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
+                    print(f'batch {i} of length {len(shower_data)}')
+                    
+                    # Resident set size memory (non-swap physical memory process has used)
+                    process = psutil.Process(os.getpid())
+                    print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
 
-                    print(f'Shower: {i}, nhits: {len(cloud_data.x)}')
+                    #if len(shower_data.x) < 1:
+                    if len(shower_data) < 1:
+                        print('Very few hits in shower: ', len(shower_data))
+                        continue
                     
                     cloud_counter+=1
-                    #if batch_counter>3:
-                    #    continue
-                    #    print(f'i: {i}')
-
-                    # Add batch dimension to front of data (currently making batches of 1 cloud manually)
-                    input_data = torch.unsqueeze(cloud_data.x, 0)
-
-                    # Calculate loss for individual cloud
-                    cloud_loss = loss_fn(model, input_data, incident_energies, new_marginal_prob_std_fn, device=device)
-
-                    # Add clouds loss to accumulating batch loss
-                    cloud_batch_losses.append( cloud_loss )
-                    
-                    # If # clouds reaches batch_size, backpropagate loss average
-                    if i%batch_size == 0 and i>0:
-                        batch_counter+=1
-                        #print(f'Batch: {batch_counter} (shower: {i})')
-                        # Average cloud loss in batch to backpropagate (could also use sum)
-                        cloud_batch_loss_average = sum(cloud_batch_losses)/len(cloud_batch_losses)
-                        #print(f'Batch loss average: ', cloud_batch_loss_average.item())
-                        # Zero any gradients from previous steps
-                        optimiser.zero_grad()
-                        # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
-                        cloud_batch_loss_average.backward(retain_graph=True)
-                        # add the batch mean loss * size of batch to cumulative loss
-                        cumulative_epoch_loss+=cloud_batch_loss_average.item()*len(cloud_batch_losses)
-                        # Update value of x += -lr * x.grad
-                        optimiser.step()
-                        # Ensure batch losses list is cleared
-                        cloud_batch_losses.clear()
+                    loss = loss_fn(model, shower_data, incident_energies, new_marginal_prob_std_fn, device=device)
+                    # Average cloud loss in batch to backpropagate (could also use sum)
+                    batch_loss = sum(loss)/len(loss)
+                    cumulative_epoch_loss+=batch_loss*batch_size
+                    # Zero any gradients from previous steps
+                    optimiser.zero_grad()
+                    # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
+                    batch_loss.backward(retain_graph=True)
+                    # Update value of x += -lr * x.grad
+                    optimiser.step()
             
                 # Testing on subset of file
-                for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader_test,0):
+                for i, (shower_data,incident_energies) in enumerate(shower_loader_test,0):
                     with torch.no_grad():
-                        input_data = torch.unsqueeze(cloud_data.x, 0)
-                        test_loss = loss_fn(model, input_data, incident_energies, new_marginal_prob_std_fn, device=device)
+                        #input_data = torch.unsqueeze(shower_data.x, 0)
+                        test_loss = loss_fn(model, shower_data, incident_energies, new_marginal_prob_std_fn, device=device)
                         test_batch_losses_per_file.append( test_loss.item() )
-                
+            
+            #wandb.log({"training_loss": cumulative_epoch_loss/cloud_counter,
+            #           "testing_loss": sum(test_batch_losses_per_file)/len(test_batch_losses_per_file) })
+
             # Add the batch size just used to the total number of clouds
             av_training_losses_per_epoch.append(cumulative_epoch_loss/cloud_counter)
             av_testing_losses_per_epoch.append( sum(test_batch_losses_per_file)/len(test_batch_losses_per_file) )
@@ -532,6 +532,7 @@ def main():
         plt.legend(loc='upper right')
         plt.tight_layout()
         fig.savefig(output_directory+'loss_v_epoch.png')
+        #wandb.finish()
     
     #### Sampling ####
     if switches_>>2 & trigger:    
@@ -559,15 +560,13 @@ def main():
         # Use clouds from a sample of random files to generate a distribution of # hits
         for idx_ in random.sample( range(0,len(files_list_)), 10):
         #for filename in files_list_:
-            #count_files+=1
-            #if count_files>=30:
-            #    break
+            
             custom_data = utils.cloud_dataset(filename[idx_], transform=utils.rescale_energies(), device=device)
             point_clouds_loader = DataLoader(custom_data, batch_size=1, shuffle=False)
             
-            for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
+            for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
                 # Get nhits for examples in input file
-                hits_lengths.append( len(cloud_data.x) )
+                hits_lengths.append( len(shower_data.x) )
                 # Get incident energies from input file
                 sampled_energies.append( incident_energies[0].item() )
         
@@ -605,12 +604,12 @@ def main():
             file = files_list_[idx_]
             # Load input data (just need example file for now)
             custom_data = utils.cloud_dataset(file,device=device)
-            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
+            point_clouds_loader = DataLoader(custom_data,batch_size=batch_size,shuffle=False)
 
-            for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
-                zlayers_ = cloud_data.x[:,3].tolist()
-                xbins_ = cloud_data.x[:,1].tolist()
-                ybins_ = cloud_data.x[:,2].tolist()
+            for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
+                zlayers_ = shower_data.x[:,3].tolist()
+                xbins_ = shower_data.x[:,1].tolist()
+                ybins_ = shower_data.x[:,2].tolist()
                 for z in zlayers_:
                     layer_list.append( z )
                 for x in xbins_:
@@ -642,12 +641,12 @@ def main():
             file = files_list_[idx_]
             #custom_data = utils.cloud_dataset(file, transform=utils.rescale_energies())
             custom_data = utils.cloud_dataset(file, device=device)
-            point_clouds_loader = DataLoader(custom_data,batch_size=load_n_clouds,shuffle=False)
+            point_clouds_loader = DataLoader(custom_data,batch_size=batch_size,shuffle=False)
             # Load each cloud and calculate desired quantity
-            for i, (cloud_data,incident_energies) in enumerate(point_clouds_loader,0):
+            for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
                 input_incident_e.append(incident_energies.item())
                 cloud_features = CloudFeatures(layer_set)
-                cloud_features.basic_quantities(cloud_data, incident_energies)
+                cloud_features.basic_quantities(shower_data, incident_energies)
                 input_total_e_per_cloud.append(cloud_features.total_energy)
                 input_total_h_per_cloud.append(cloud_features.n_hits)
                 input_layer0_e_in_cloud.append(cloud_features.layers_sum_e.get(0)[0])
@@ -678,7 +677,7 @@ def main():
         test_ge_filename = 'sampling_64embeddim_16_attheads_output/generated_samples.pt'
         custom_gendata = utils.cloud_dataset(test_ge_filename, transform=utils.unscale_energies(), device=device)
         #custom_gendata = utils.cloud_dataset(test_ge_filename, device=device)
-        gen_point_clouds_loader = DataLoader(custom_gendata,batch_size=load_n_clouds,shuffle=False)
+        gen_point_clouds_loader = DataLoader(custom_gendata,batch_size=batch_size,shuffle=False)
 
 
         gen_total_e_per_cloud = []
@@ -694,10 +693,10 @@ def main():
                 gen_layers_sum_e[layer_] = []
                 gen_layers_nhits[layer_] = []
 
-        for i, (cloud_data,incident_energies) in enumerate(gen_point_clouds_loader,0):
+        for i, (shower_data,incident_energies) in enumerate(gen_point_clouds_loader,0):
             gen_incident_e.append(incident_energies.item())
             gen_cloud_features = CloudFeatures(layer_set)
-            gen_cloud_features.basic_quantities(cloud_data, incident_energies)
+            gen_cloud_features.basic_quantities(shower_data, incident_energies)
             gen_total_e_per_cloud.append(gen_cloud_features.total_energy)
             gen_total_h_per_cloud.append(gen_cloud_features.n_hits)
             gen_layer0_e_in_cloud.append(gen_cloud_features.layers_sum_e.get(0)[0])
@@ -813,6 +812,44 @@ def main():
 
 if __name__=='__main__':
     start = time.time()
+    '''global tracking_
+    global sweep_
+    tracking_ = False
+    sweep_ = False
+    # Start sweep job.
+    if tracking_:
+            if sweep_:
+                # Define sweep config
+                sweep_configuration = {
+                    'method': 'random',
+                    'name': 'sweep',
+                    'metric': {'goal': 'maximize', 'name': 'val_acc'},
+                    'parameters': 
+                    {
+                        'batch_size': {'values': [50, 100, 150]},
+                        'epochs': {'values': [5, 10, 15]},
+                        'lr': {'max': 0.001, 'min': 0.00001},
+                    }
+                }
+                sweep_id = wandb.sweep(sweep=sweep_configuration, project='my-first-sweep')
+                wandb.agent(sweep_id, function=main, count=4)
+            else:
+                # start a new wandb run to track this script
+                wandb.init(
+                    # set the wandb project where this run will be logged
+                    project="trans_tdsm",
+                    # track hyperparameters and run metadata
+                    config={
+                    "architecture": "encoder",
+                    "dataset": "calochallenge_2",
+                    "batch_size": 10,
+                    "epochs": 10,
+                    "lr": 0.0001,
+                    }
+                )
+                main()
+    else:
+        main()'''
     main()
     fin = time.time()
     elapsed_time = fin-start

@@ -27,28 +27,6 @@ class cloud_dataset(Dataset):
   def __len__(self):
     return len(self.data)
 
-'''class HitCloudDataset(Dataset):
-  def __init__(self, datafolder):
-    \'''Inheriting from pytorch Dataset class
-    #Loads each file lazily only when __getitem__ is
-    #called. Returns all graphs in files which can
-    #then be looped over during training.
-    \'''
-    self.files_list = []
-    self.data_folder = datafolder
-    for filename in os.listdir(datafolder):
-      if fnmatch.fnmatch(filename, 'dataset_2_1_graph*.pt'):
-          self.files_list.append(os.path.join(datafolder,filename))
-    #with open(self.files_list, 'r') as f:
-    #  self.file_list = f.read().splitlines()
-  
-  def __len__(self):
-    return len(self.files_list)
-  
-  def __getitem__(self,idx):
-    filename = self.files_list[idx]
-    loaded_file = torch.load(filename)
-    return loaded_file'''
 
 class rescale_conditional:
   '''Convert hit energies to range |01)
@@ -67,17 +45,22 @@ class rescale_energies:
             pass
 
         def __call__(self, features, condition, device='cpu'):
-            Eprime = features.x[:,0]/(2*condition)
+            #Eprime = features.x[:,0]/(2*condition)
+            Eprime = features[:,0]/(2*condition)
             alpha = 1e-06
             x = alpha+(1-(2*alpha))*Eprime
             rescaled_e = torch.tensor([math.log( x_/(1-x_) ) for x_ in x], device=torch.device(device))
-            x_ = features.x[:,1]
-            y_ = features.x[:,2]
-            z_ = features.x[:,3]
+            #x_ = features.x[:,1]
+            x_ = features[:,1]
+            #y_ = features.x[:,2]
+            y_ = features[:,2]
+            #z_ = features.x[:,3]
+            z_ = features[:,3]
             
             # Stack tensors along the 'hits' dimension -1 
             stack_ = torch.stack((rescaled_e,x_,y_,z_), -1)
-            self.features = Data(x=stack_)
+            #self.features = Data(x=stack_)
+            self.features = stack_
             
             return self.features
 
