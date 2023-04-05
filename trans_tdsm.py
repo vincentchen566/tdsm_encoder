@@ -177,7 +177,6 @@ class Gen(nn.Module):
         output = self.out(mean_) / std_1d
         return output 
 
-#def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='cpu'):
 def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='cpu'):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
@@ -192,26 +191,37 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
         marginal_prob_std: A function that gives the standard deviation of the perturbation kernel
         eps: A tolerance value for numerical stability
     """
+    process = psutil.Process(os.getpid())
+    print('7: ', process.memory_info().rss/1000000)
     model.to(device)
+    print('8: ', process.memory_info().rss/1000000)
     # Tensor of randomised conditional variable 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
+    print('9: ', process.memory_info().rss/1000000)
     # Tensor of conditional variable incident energies 
     incident_energies = torch.squeeze(incident_energies,-1)
     incident_energies.to(device)
+    print('10: ', process.memory_info().rss/1000000)
     # matrix of noise
     z = torch.randn_like(x, device=device)
+    print('11: ', process.memory_info().rss/1000000)
     # Sample from standard deviation of noise
     mean_, std_ = marginal_prob_std(x,random_t)
     std_.to(device)
+    print('12: ', process.memory_info().rss/1000000)
     # Add noise to input
     #print(f'x.is_cuda: {x.is_cuda}')
     perturbed_x = x + z * std_[:, None, None]
+    print('13: ', process.memory_info().rss/1000000)
     # Evaluate model
     model_output = model(perturbed_x, random_t, incident_energies)
+    print('14: ', process.memory_info().rss/1000000)
     losses = (model_output*std_[:,None,None] + z)**2
+    print('15: ', process.memory_info().rss/1000000)
     # Collect loss
     #cloud_loss = torch.sum( losses, dim=(1,2))
     cloud_loss = torch.mean( losses, dim=(1,2))
+    print('16: ', process.memory_info().rss/1000000)
     #print(f'cloud_loss: {cloud_loss}')
     return cloud_loss
 
@@ -318,7 +328,6 @@ def main():
 
     print('Working directory: ' , workingdir)
     
-    batch_size = 5
     sigma = 25.0
     vesde = utils.VESDE(device=device)
     new_marginal_prob_std_fn = functools.partial(vesde.marginal_prob)
@@ -428,7 +437,8 @@ def main():
                 n_epochs = wandb.config.epochs'''
 
         
-        model=Gen(4, 64, 128, 12, 16, 0, marginal_prob_std=new_marginal_prob_std_fn)
+        #model=Gen(4, 64, 128, 12, 16, 0, marginal_prob_std=new_marginal_prob_std_fn)
+        model=Gen(4, 64, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
         print('model: ', model)
         if torch.cuda.device_count() > 1:
             print(f'Lets us: {torch.cuda.device_count()} GPUs!')
@@ -473,8 +483,10 @@ def main():
                 print(f'train_dataset: {len(train_dataset)} showers')
             
                 # Load clouds for each epoch of data dataloaders length will be the number of batches
-                shower_loader_train = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
-                shower_loader_test = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
+                #shower_loader_train = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
+                #shower_loader_test = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
+                shower_loader_train = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+                shower_loader_test = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
                 
                 # Load a shower for training
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
@@ -491,20 +503,26 @@ def main():
                     
                     cloud_counter+=1
                     loss = loss_fn(model, shower_data, incident_energies, new_marginal_prob_std_fn, device=device)
+                    print('1: ', process.memory_info().rss/1000000)
                     # Average cloud loss in batch to backpropagate (could also use sum)
                     batch_loss = sum(loss)/len(loss)
+                    print('2: ', process.memory_info().rss/1000000)
                     cumulative_epoch_loss+=batch_loss*batch_size
+                    print('3: ', process.memory_info().rss/1000000)
                     # Zero any gradients from previous steps
                     optimiser.zero_grad()
+                    print('4: ', process.memory_info().rss/1000000)
                     # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
-                    batch_loss.backward(retain_graph=True)
+                    #batch_loss.backward(retain_graph=True)
+                    batch_loss.backward()
+                    print('5: ', process.memory_info().rss/1000000)
                     # Update value of x += -lr * x.grad
                     optimiser.step()
+                    print('6: ', process.memory_info().rss/1000000)
             
                 # Testing on subset of file
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_test,0):
                     with torch.no_grad():
-                        #input_data = torch.unsqueeze(shower_data.x, 0)
                         test_loss = loss_fn(model, shower_data, incident_energies, new_marginal_prob_std_fn, device=device)
                         test_batch_losses_per_file.append( test_loss.item() )
             
