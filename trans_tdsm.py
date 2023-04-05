@@ -191,23 +191,33 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
         marginal_prob_std: A function that gives the standard deviation of the perturbation kernel
         eps: A tolerance value for numerical stability
     """
+    process = psutil.Process(os.getpid())
+    
     model.to(device)
+    
     # Tensor of randomised conditional variable 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
+    
     # Tensor of conditional variable incident energies 
     incident_energies = torch.squeeze(incident_energies,-1)
     incident_energies.to(device)
+    
     # matrix of noise
     z = torch.randn_like(x, device=device)
+    
     # Sample from standard deviation of noise
     mean_, std_ = marginal_prob_std(x,random_t)
     std_.to(device)
+    
     # Add noise to input
     #print(f'x.is_cuda: {x.is_cuda}')
     perturbed_x = x + z * std_[:, None, None]
+    
     # Evaluate model
     model_output = model(perturbed_x, random_t, incident_energies)
+    
     losses = (model_output*std_[:,None,None] + z)**2
+    
     # Collect loss
     batch_loss = torch.sum( losses, dim=(0,1,2))
     #cloud_loss = torch.mean( losses, dim=(0,1,2))
@@ -317,7 +327,6 @@ def main():
 
     print('Working directory: ' , workingdir)
     
-    batch_size = 5
     sigma = 25.0
     vesde = utils.VESDE(device=device)
     new_marginal_prob_std_fn = functools.partial(vesde.marginal_prob)
