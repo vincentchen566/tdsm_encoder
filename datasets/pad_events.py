@@ -6,7 +6,8 @@ from torch_geometric.data import Data
 
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    filename = 'dataset_2_1_graph_0.pt'
+    #filename = 'dataset_2_1_graph_0.pt'
+    filename = '/eos/user/t/tihsu/SWAN_projects/homepage/datasets/graph/dataset_1_photons_1_graph_0.pt'
     loaded_file = torch.load(filename)
     showers = loaded_file[0]
     print(f'list of {len(showers)} showers of type {type(showers[0])} from file {filename}')
@@ -25,11 +26,11 @@ def main():
         padded_showers.append(padded_shower)
 
     print(f'list of {len(padded_showers)} padded_showers of type {type(padded_showers[0])}')
-    torch.save([padded_showers,incident_energies], 'padded_dataset_2_1_graph_0.pt')
+    torch.save([padded_showers,incident_energies], 'padded_dataset_1_photons_1_graph_0.pt')
 
 if __name__=='__main__':
     main()
-    padded_filename = 'padded_dataset_2_1_graph_0.pt'
+    padded_filename = 'padded_dataset_1_photons_1_graph_0.pt'
     padded_loaded_file = torch.load(padded_filename)
     padded_showers = padded_loaded_file[0]
     print(f'list of {len(padded_showers)} showers of type {type(padded_showers[0])} from file {padded_filename}')
