@@ -10,7 +10,7 @@ import torchvision.transforms as transforms
 #from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from torch.utils.data import Dataset, DataLoader
-import torch.multiprocessing as mp
+#import torch.multiprocessing as mp
 #import wandb
 
 class GaussianFourierProjection(nn.Module):
@@ -177,7 +177,6 @@ class Gen(nn.Module):
         output = self.out(mean_) / std_1d
         return output 
 
-#def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='cpu'):
 def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='cpu'):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
@@ -210,10 +209,10 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     model_output = model(perturbed_x, random_t, incident_energies)
     losses = (model_output*std_[:,None,None] + z)**2
     # Collect loss
-    #cloud_loss = torch.sum( losses, dim=(1,2))
-    cloud_loss = torch.mean( losses, dim=(1,2))
-    #print(f'cloud_loss: {cloud_loss}')
-    return cloud_loss
+    batch_loss = torch.sum( losses, dim=(0,1,2))
+    #cloud_loss = torch.mean( losses, dim=(0,1,2))
+    #print(f'Summed losses (dim=1,2): {summed_losses}')
+    return batch_loss
 
 def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energies, sampled_hits, batch_size=1, snr=0.16, device='cuda', eps=1e-3):
     ''' Generate samples from score based models with Predictor-Corrector method
@@ -330,7 +329,8 @@ def main():
     files_list_ = []
     for filename in os.listdir(training_file_path):
         #if fnmatch.fnmatch(filename, 'dataset_2_1_graph*.pt'):
-        if fnmatch.fnmatch(filename, 'padded_dataset_2_1_graph*.pt'):
+        #if fnmatch.fnmatch(filename, 'padded_dataset_2_1_graph*.pt'):
+        if fnmatch.fnmatch(filename, 'toy_model.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     
 
@@ -409,9 +409,9 @@ def main():
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
 
-        batch_size = 10
+        batch_size = 150
         lr = 0.0001
-        n_epochs = 10
+        n_epochs = 200
         '''if tracking_ == True:
             if sweep_ == True:
                 run_ = wandb.init()
@@ -428,7 +428,7 @@ def main():
                 n_epochs = wandb.config.epochs'''
 
         
-        model=Gen(4, 64, 128, 12, 16, 0, marginal_prob_std=new_marginal_prob_std_fn)
+        model=Gen(4, 200, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
         print('model: ', model)
         if torch.cuda.device_count() > 1:
             print(f'Lets us: {torch.cuda.device_count()} GPUs!')
@@ -448,10 +448,11 @@ def main():
             print(f"epoch: {epoch}")
             # Create/clear per epoch variables
             cumulative_epoch_loss = 0.
-            test_batch_losses_per_file = []
+            cumulative_test_epoch_loss = 0.
 
             file_counter = 0
-            cloud_counter = 0
+            n_training_showers = 0
+            n_testing_showers = 0
             # Load files
             files_list_ = [files_list_[f] for f in range(0,1)]
             # For debugging purposes
@@ -464,56 +465,58 @@ def main():
                 #process = psutil.Process(os.getpid())
                 #print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
 
-                custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), device=device)
+                #custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), device=device)
+                custom_data = utils.cloud_dataset(filename, device=device)
                 print(f'{len(custom_data)} showers in file')
                 
                 train_size = int(0.9 * len(custom_data.data))
                 test_size = len(custom_data.data) - train_size
                 train_dataset, test_dataset = torch.utils.data.random_split(custom_data, [train_size, test_size])
-                print(f'train_dataset: {len(train_dataset)} showers')
+
+                n_training_showers+=train_size
+                n_testing_showers+=test_size
             
                 # Load clouds for each epoch of data dataloaders length will be the number of batches
                 shower_loader_train = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
                 shower_loader_test = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
+                print(f'train_dataset: {len(train_dataset)} showers, batch size: {len(shower_loader_train.dataset)} showers')
                 
                 # Load a shower for training
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
-                    print(f'batch {i} of length {len(shower_data)}')
+                    #print(f'batch {i} of length {len(shower_data)}')
                     
                     # Resident set size memory (non-swap physical memory process has used)
-                    process = psutil.Process(os.getpid())
-                    print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
+                    #process = psutil.Process(os.getpid())
+                    #print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
 
-                    #if len(shower_data.x) < 1:
                     if len(shower_data) < 1:
                         print('Very few hits in shower: ', len(shower_data))
                         continue
                     
-                    cloud_counter+=1
                     loss = loss_fn(model, shower_data, incident_energies, new_marginal_prob_std_fn, device=device)
                     # Average cloud loss in batch to backpropagate (could also use sum)
-                    batch_loss = sum(loss)/len(loss)
-                    cumulative_epoch_loss+=batch_loss*batch_size
+                    batch_loss_averaged = loss/len(shower_data)
+                    cumulative_epoch_loss+=batch_loss_averaged.item()*batch_size
                     # Zero any gradients from previous steps
                     optimiser.zero_grad()
                     # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
-                    batch_loss.backward(retain_graph=True)
+                    batch_loss_averaged.backward(retain_graph=True)
                     # Update value of x += -lr * x.grad
                     optimiser.step()
             
                 # Testing on subset of file
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_test,0):
                     with torch.no_grad():
-                        #input_data = torch.unsqueeze(shower_data.x, 0)
                         test_loss = loss_fn(model, shower_data, incident_energies, new_marginal_prob_std_fn, device=device)
-                        test_batch_losses_per_file.append( test_loss.item() )
+                        test_batch_loss_averaged = test_loss/len(shower_data)
+                        cumulative_test_epoch_loss+=test_batch_loss_averaged.item()*batch_size
             
-            #wandb.log({"training_loss": cumulative_epoch_loss/cloud_counter,
-            #           "testing_loss": sum(test_batch_losses_per_file)/len(test_batch_losses_per_file) })
+            #wandb.log({"training_loss": cumulative_epoch_loss/n_training_showers,
+            #           "testing_loss": cumulative_test_epoch_loss/n_testing_showers})
 
             # Add the batch size just used to the total number of clouds
-            av_training_losses_per_epoch.append(cumulative_epoch_loss/cloud_counter)
-            av_testing_losses_per_epoch.append( sum(test_batch_losses_per_file)/len(test_batch_losses_per_file) )
+            av_training_losses_per_epoch.append(cumulative_epoch_loss/n_training_showers)
+            av_testing_losses_per_epoch.append(cumulative_test_epoch_loss/n_testing_showers)
             print(f'End-of-epoch: average train loss = {av_training_losses_per_epoch}, average test loss = {av_testing_losses_per_epoch}')
             # Save checkpoint file after each epoch
             torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
