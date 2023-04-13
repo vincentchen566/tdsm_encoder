@@ -7,13 +7,14 @@ class cloud_dataset(Dataset):
   def __init__(self, filename, transform=None, transform_y=None, device='cpu'):
     loaded_file = torch.load(filename, map_location=torch.device(device))
     self.data = loaded_file[0]
-    print(f'Loading: {type(loaded_file[0])}, {type(loaded_file[1])}')
+    print(f'Loading {filename}: {type(loaded_file[0])}, {type(loaded_file[1])}')
     if 'toy_model' in filename:
       self.condition = loaded_file[1].clone().detach()
       self.min_y = torch.min(self.condition)
       self.max_y = torch.max(self.condition)
     else:
       self.condition = loaded_file[1]
+      print(f'{self.condition}')
       self.min_y = np.min(self.condition)
       self.max_y = np.max(self.condition)
 
@@ -32,7 +33,6 @@ class cloud_dataset(Dataset):
   
   def __len__(self):
     return len(self.data)
-
 
 class rescale_conditional:
   '''Convert hit energies to range |01)

@@ -1,5 +1,5 @@
 import time, functools, torch, os, random, utils, fnmatch, psutil, argparse, math
-from shower_features import shower_features
+#from shower_features import shower_features
 from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
@@ -182,10 +182,10 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
         marginal_prob_std: A function that gives the standard deviation of the perturbation kernel
         eps: A tolerance value for numerical stability
     """
-    
-    # Generate padding mask for 0 padded entries or equivalent value if energies have been transformed
-    padding_mask = (x!=-20).type(torch.int)
 
+    # Generate padding mask for 0 padded entries or equivalent value if energies have been transformed
+    #padding_mask = (x!=-20).type(torch.int)
+    padding_mask = (x==0)
     # Collapse hit 4-vector dimension so mask simply masks out entire hit
     padding_mask = torch.min(padding_mask,2)[0]
 
@@ -321,7 +321,8 @@ def main():
     new_diffusion_coeff_fn = functools.partial(vesde.sde)
 
     # List of training input files
-    training_file_path = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/datasets/'
+    #training_file_path = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/datasets/'
+    training_file_path = 'datasets/'
     files_list_ = []
     for filename in os.listdir(training_file_path):
         #if fnmatch.fnmatch(filename, 'padded_dataset_2_1_graph_0.pt'):
@@ -407,9 +408,9 @@ def main():
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
 
-        batch_size = 32
+        batch_size = 100
         lr = 0.0001
-        n_epochs = 500
+        n_epochs = 200
         '''if tracking_ == True:
             if sweep_ == True:
                 run_ = wandb.init()
@@ -480,7 +481,7 @@ def main():
                 
                 # Load a shower for training
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
-                    print(f'batch {i} of length {len(shower_data)}')
+                    #print(f'batch {i} of length {len(shower_data)}')
                     
                     # Move model to device and set dtype as same as data (note torch.double works on both CPU and GPU)
                     model.to(device, shower_data.dtype)
@@ -543,7 +544,8 @@ def main():
         
         sample_batch_size = 10
         model=Gen(4, 200, 128, 3, 1, 0, marginal_prob_std=new_marginal_prob_std_fn)
-        load_name = os.path.join(workingdir,'training_rescaled_energies_20230410_1159_output/ckpt_tmp_499.pth')
+        #load_name = os.path.join(workingdir,'training_rescaled_energies_20230410_1159_output/ckpt_tmp_499.pth')
+        load_name = os.path.join(workingdir,'training_rescaled_energies_20230412_1704_output/ckpt_tmp_199.pth')
 
         model.load_state_dict(torch.load(load_name, map_location=device))
         model.to(device)
@@ -579,8 +581,9 @@ def main():
             samples = sampler(model, new_marginal_prob_std_fn, new_diffusion_coeff_fn, sampled_energies, sampled_hits, 50, device=device)
             samples_.append(samples)
         print('samples_: ', samples_)
-        print('np.squeeze(samples_): ', np.squeeze(samples_))
-        torch.save([samples_,torch.tensor(in_energies)], output_directory+'generated_samples.pt')
+        #print('np.squeeze(samples_): ', np.squeeze(samples_))
+        #torch.save([samples_,torch.tensor(in_energies)], output_directory+'generated_samples.pt')
+        torch.save([samples_,in_energies], output_directory+'generated_samples.pt')
 
     #### Evaluation plots ####
     if switches_>>3 & trigger:
@@ -679,7 +682,8 @@ def main():
             input_layer_n_hits_averages.append( mean_n_hits_for_layer )'''
         
         # Load generated image file
-        test_ge_filename = 'sampling_20230411_1500_output/generated_samples.pt'
+        #test_ge_filename = 'sampling_20230411_1500_output/generated_samples.pt'
+        test_ge_filename = 'sampling_20230413_1123_output/generated_samples.pt'
         
         custom_gendata = utils.cloud_dataset(test_ge_filename, device=device)
         gen_point_shower_loader = DataLoader(custom_gendata,batch_size=1,shuffle=False)
@@ -703,10 +707,10 @@ def main():
         for i, (shower_data,incident_energies) in enumerate(gen_point_shower_loader,0):
             shower_data = torch.squeeze(shower_data)
             print('incident_energies: ', incident_energies)
-            print(f'Batch {i} shape = {shower_data.shape} ')
+            print(f'Batch {i} shape = {shower_data.shape} \n {shower_data}')
             if i>450:
                     continue
-            
+            print(f'shower_data[:,:,0]: {shower_data[:,:,0].tolist()}')
             batch_hits_e = np.concatenate(shower_data[:,:,0].tolist())
             batch_hits_x = np.concatenate(shower_data[:,:,1].tolist())
             batch_hits_y = np.concatenate(shower_data[:,:,2].tolist())
@@ -728,7 +732,7 @@ def main():
             total_shower_nhits_GEN.append(total_hits_per_shower)
 
             unscaler = utils.unscale_energies()
-            incident_energies = torch.squeeze(incident_energies)
+            #incident_energies = torch.squeeze(incident_energies)
             shower_n = 0
             for shower_ in shower_data:
                 shower_data_transformed = unscaler(shower_,incident_energies[shower_n])
