@@ -2,17 +2,24 @@ import h5py, math, torch, fnmatch, os
 import numpy as np
 from torch_geometric.data import Data
 from torch.utils.data import Dataset
-#from torch_geometric.data import Dataset
 
 class cloud_dataset(Dataset):
   def __init__(self, filename, transform=None, transform_y=None, device='cpu'):
     loaded_file = torch.load(filename, map_location=torch.device(device))
     self.data = loaded_file[0]
-    self.condition = torch.tensor(loaded_file[1], dtype=torch.long, device=torch.device(device))
+    print(f'Loading {filename}: {type(loaded_file[0])}, {type(loaded_file[1])}')
+    if 'toy_model' in filename:
+      self.condition = loaded_file[1].clone().detach()
+      self.min_y = torch.min(self.condition)
+      self.max_y = torch.max(self.condition)
+    else:
+      self.condition = loaded_file[1]
+      print(f'{self.condition}')
+      self.min_y = np.min(self.condition)
+      self.max_y = np.max(self.condition)
+
     self.transform = transform
     self.transform_y = transform_y
-    self.min_y = torch.min(self.condition)
-    self.max_y = torch.max(self.condition)
     self.device = device
 
   def __getitem__(self, index):
@@ -26,7 +33,6 @@ class cloud_dataset(Dataset):
   
   def __len__(self):
     return len(self.data)
-
 
 class rescale_conditional:
   '''Convert hit energies to range |01)
@@ -45,21 +51,19 @@ class rescale_energies:
             pass
 
         def __call__(self, features, condition, device='cpu'):
-            #Eprime = features.x[:,0]/(2*condition)
             Eprime = features[:,0]/(2*condition)
             alpha = 1e-06
             x = alpha+(1-(2*alpha))*Eprime
-            rescaled_e = torch.tensor([math.log( x_/(1-x_) ) for x_ in x], device=torch.device(device))
-            #x_ = features.x[:,1]
+            rescaled_e = torch.log(x/(1-x))
+            print('rescaled_e: ', rescaled_e)
+            rescaled_e = torch.nan_to_num(rescaled_e)
+            print('rescaled_e nan_to_num: ', rescaled_e)
+            rescaled_e = torch.reshape(rescaled_e,(-1,))
             x_ = features[:,1]
-            #y_ = features.x[:,2]
             y_ = features[:,2]
-            #z_ = features.x[:,3]
             z_ = features[:,3]
-            
             # Stack tensors along the 'hits' dimension -1 
             stack_ = torch.stack((rescaled_e,x_,y_,z_), -1)
-            #self.features = Data(x=stack_)
             self.features = stack_
             
             return self.features
@@ -71,14 +75,18 @@ class unscale_energies:
             pass
 
         def __call__(self, features, condition):
-            rescaled_e = features.x[:,0]*(condition)
-            x_ = features.x[:,1]
-            y_ = features.x[:,2]
-            z_ = features.x[:,3]
+            alpha = 1e-06
+            eR = torch.exp(features[:,0])
+            A = eR/(1+eR)
+            rescaled_e = (A-alpha)*(2*condition)/(1-(2*alpha))
+
+            x_ = features[:,1]
+            y_ = features[:,2]
+            z_ = features[:,3]
             
             # Stack tensors along the 'hits' dimension -1 
             stack_ = torch.stack((rescaled_e,x_,y_,z_), -1)
-            self.features = Data(x=stack_)
+            self.features = stack_
             
             return self.features
 
