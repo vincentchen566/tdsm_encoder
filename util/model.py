@@ -220,10 +220,10 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     
     # Collect loss
     batch_loss = torch.sum( losses, dim=(0,1,2))
-    n_hits     = torch.sum( anti_mask, dim=(0,1)) if not mask is None else 1.0
+#    n_hits     = torch.sum( anti_mask, dim=(0,1)) if not mask is None else 1.0
     #cloud_loss = torch.mean( losses, dim=(0,1,2))
     #print(f'Summed losses (dim=1,2): {summed_losses}')
-    return batch_loss/n_hits
+    return batch_loss
 
 def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energies, init_x, batch_size=1, snr=0.16, device='cuda', eps=1e-3, mask=True, padding_value=-20, jupyternotebook=False):
     ''' Generate samples from score based models with Predictor-Corrector method
@@ -246,6 +246,7 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
     t = torch.ones(batch_size, device=device)
     mean_,std_ =  marginal_prob_std(init_x,t)
     std_.to(device)
+    mask_tensor = init_x[:,:,3] == padding_value
     init_x = init_x*std_[:,None,None]
     time_steps = np.linspace(1., eps, num_steps)
     step_size = time_steps[0]-time_steps[1]
@@ -268,7 +269,7 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
             # Corrector step (Langevin MCMC)
             # First calculate Langevin step size using the predicted scores
             if mask:
-              grad = score_model(x, batch_time_step, sampled_energies, mask=x[:,:,3]==padding_value)
+              grad = score_model(x, batch_time_step, sampled_energies, mask=mask_tensor)
             else:
               grad = score_model(x, batch_time_step, sampled_energies)
 
@@ -279,6 +280,13 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
             # Take the mean value
             # of the vector norm (sqrt sum squares)
             # of the flattened scores for e,x,y,z
+            if mask:
+              mask_matrix = mask_tensor
+              anti_mask = (~mask_matrix).float()
+              anti_mask = anti_mask[...,None]
+              grad  = grad*anti_mask
+              noise = noise*anti_mask
+ 
             flattened_scores = grad.reshape(grad.shape[0], -1)
             grad_norm = torch.linalg.norm( flattened_scores, dim=-1 ).mean()
             flattened_noise = noise.reshape(noise.shape[0],-1)
@@ -292,7 +300,7 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
             # Euler-Maruyama predictor step
             drift, diff = diffusion_coeff(x,batch_time_step)
             if mask:
-              x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=x[:,:,3]==padding_value) * step_size
+              x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=mask_tensor) * step_size
             else:
               x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies) * step_size
             x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * torch.randn_like(x)
@@ -301,8 +309,21 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energie
     # Do not include noise in last step
     return x_mean
 
-def training(batch_size = 150, lr = 1e-4, n_epochs = 200, model=None, new_marginal_prob_std_fn=None, device='cpu', jupyternotebook=False, files_list=None, train_ratio = 0.9, mask=True, padding_value=-20):
-    output_directory = 'training_result/training_64embeddim_16_attheads_12_encoder_blocks_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
+def training(batch_size = 150,
+             lr = 1e-4, 
+             n_epochs = 200,
+             model=None,
+             new_marginal_prob_std_fn=None,
+             device='cpu', 
+             jupyternotebook=False,
+             files_list=None,
+             train_ratio = 0.9,
+             mask=True,
+             padding_value=-20,
+             transform = None,
+             transform_y = None,
+             label=''):
+    output_directory = 'training_result/' + label + '/'
     print('Output directory: ', output_directory)
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
@@ -345,9 +366,9 @@ def training(batch_size = 150, lr = 1e-4, n_epochs = 200, model=None, new_margin
         for file_name in files_list:
             file_counter += 1
             
-            custom_data = util.dataset_structure.cloud_dataset(file_name, device=device, transform_y=util.dataset_structure.rescale_conditional()) # TODO:transform_x has problem.
+            custom_data = util.dataset_structure.cloud_dataset(file_name, device=device, transform=transform,transform_y=transform_y)
             
-            print(f'{len(custom_data)} showers in file')
+#            print(f'{len(custom_data)} showers in file')
             
             train_size = int(0.9 * len(custom_data.data))
             test_size  = len(custom_data.data) - train_size
@@ -359,7 +380,7 @@ def training(batch_size = 150, lr = 1e-4, n_epochs = 200, model=None, new_margin
             n_testing_showers  += test_size
             shower_loader_train = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) #TODO: pin_memory, num_workers have bug.
             shower_loader_test  = DataLoader(test_dataset,  batch_size=batch_size, shuffle=True)
-            print(f'train_dataset: {len(train_dataset)} showers, batch size: {len(shower_loader_train.dataset)} showers')
+#            print(f'train_dataset: {len(train_dataset)} showers, batch size: {len(shower_loader_train.dataset)} showers')
             for i,(shower_data, incident_energies)in enumerate(shower_loader_train,0):
                 if len(shower_data) < 1:
                     print('Very few hits in shower: ', len(shower_data))
@@ -448,8 +469,11 @@ def generate_sample(model=None,
                     in_energies=None,
                     sampled_file_list=[],
                     mask=True,
+                    padding_value = -20,
                     jupyternotebook = False,
-                    label='sample'):
+                    label='sample',
+                    transform   = None,
+                    transform_y = None):
     
     in_energies = in_energies.cpu().numpy()
     
@@ -488,9 +512,9 @@ def generate_sample(model=None,
     e_vs_nhits_prob, x_bin, y_bin = get_prob_dist(all_incident_e, entries, n_bin)    
     nhits, gen_hits = generate_hits(e_vs_nhits_prob, x_bin, y_bin, in_energies, max_hits, 4, device=device)
     torch.save([gen_hits, in_energies],'tmp.pt')
-    
-    gen_hits = util.dataset_structure.cloud_dataset('tmp.pt', device=device, transform_y=util.dataset_structure.rescale_conditional())
-    gen_hits.padding()
+  
+    gen_hits = util.dataset_structure.cloud_dataset('tmp.pt', device=device, transform=transform, transform_y=transform_y)
+    gen_hits.padding(padding_value)
     os.system("rm tmp.pt")
     sample = []
     gen_hits_loader = DataLoader(gen_hits, batch_size=sample_batch_size, shuffle=False)
@@ -498,7 +522,7 @@ def generate_sample(model=None,
         sys.stdout.write('\r')
         sys.stdout.write("Progress: %d/%d" % ((i+1), len(gen_hits_loader)))
         sys.stdout.flush()
-        generative = util.model.pc_sampler(model, marginal_prob_std, diffusion_coeff, sampled_energies, gen_hit, batch_size=len(gen_hit), snr=0.16, device=device, eps=1e-3, mask=mask, jupyternotebook=jupyternotebook)
+        generative = util.model.pc_sampler(model, marginal_prob_std, diffusion_coeff, sampled_energies, gen_hit, batch_size=len(gen_hit), snr=0.16, device=device, eps=1e-3, mask=mask, jupyternotebook=jupyternotebook, padding_value=padding_value)
         if i == 0:
             sample = generative
         else:

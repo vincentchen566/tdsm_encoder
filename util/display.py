@@ -5,7 +5,7 @@ import torch
 import pandas as pd
 import plotly.graph_objs as go
 
-def plot_distribution(point_clouds_loader, label=""):    
+def plot_distribution(point_clouds_loader, label="", padding_value=-20):    
 
     all_x = []
     all_y = []
@@ -20,7 +20,7 @@ def plot_distribution(point_clouds_loader, label=""):
         data_np = shower_data.cpu().numpy().copy()
         energy_np = incident_energies.cpu().numpy().copy()
         
-        mask = data_np[:,:,3] > -10
+        mask = ~(data_np[:,:,3] == padding_value)
         
         for j in range(len(data_np)):
             valid_event = data_np[j][mask[j]]
