@@ -18,7 +18,7 @@ def generate_event(max_energy, nevent, nlayer=3):
       position    = torch.cat([energy_dep,position_xy, position_z], axis=-1)
       hit.append(position)
       remaining_hits -= nhits
-    padding = torch.ones((remaining_hits,4))*0
+    padding = torch.ones((remaining_hits,4))*-20
     hit.append(padding)
     Event.append(torch.cat(hit, axis=0))
   if not os.path.exists('dataset'):
