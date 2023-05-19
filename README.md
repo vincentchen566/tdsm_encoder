@@ -57,6 +57,13 @@ request_CPUs = N
 ```
 By default, the job will get one slot on a single CPU core with 2GB of (RAM) memory and 20GB of disk space. You can see the portion of memory that is occupied by a process that is held in the main RAM memory by checking the resident set size (RSS). Currently, jobs seem to be close to the limit (~2GB) so sometimes we get memory warning/failures. (numbers reutned by memory_info are expressed in bytes. We divide them to get number in GB)
 
+```
+condor_q -global -all -const '(requestGPUs > 0)'
+```
+Number of GPU with 4 or more slots:
+```
+condor_status -const 'TotalSlotGpus >= 4' -compact
+```
 ## Priority
 Check real priority with
 ```
