@@ -9,6 +9,8 @@ from torch.optim import Adam, RAdam
 import torchvision.transforms as transforms
 from torch_geometric.data import Data
 from torch.utils.data import Dataset, DataLoader
+import tqdm
+from IPython import display
 #import torch.multiprocessing as mp
 #import wandb
 
@@ -35,7 +37,7 @@ class AdaptiveBatchNorm2D(nn.Module):
 
     def forward(self, x):
         return self.a * x + self.b * self.bn(x)
-    
+
 class Dense(nn.Module):
     """Fully connected layer that reshapes output of embedded conditional variable to feature maps"""
     def __init__(self, input_dim, output_dim):
@@ -223,9 +225,6 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     # Tensor of randomised conditional variable 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
     
-    # Tensor of conditional variable incident energies 
-    incident_energies = torch.squeeze(incident_energies,-1)
-    
     # Noise input
     # Multiply by mask so we don't go perturbing zero padded values to have some non-sentinel value
     z = torch.randn_like(x)*output_mask
@@ -246,7 +245,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     # Zero losses calculated over padded inputs
     loss = loss*output_mask
     
-    # Sum loss across all hits and 4-vectors
+    # Sum loss across all hits and 4-vectors (normalise by number of hits)
     sum_loss = torch.sum( loss, dim=(1,2))
 
     # Average across batch
@@ -255,7 +254,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     return batch_loss
 
 
-def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_e_h_, batch_size=1, snr=0.16, sampler_steps=100, device='cuda', eps=1e-3):
+def pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_energies, init_x, batch_size=1, snr=0.16, sampler_steps=100, device='cuda', eps=1e-3, jupyternotebook=False):
     ''' Generate samples from score based models with Predictor-Corrector method
         Args:
         score_model: A PyTorch model that represents the time-dependent score-based model.
@@ -271,37 +270,43 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_e_h_, b
         Returns:
             samples
     '''
-    sampled_energies = torch.tensor(sampled_e_h_[0])
-    sampled_hits = torch.tensor(sampled_e_h_[1])
-    padded_hits = torch.tensor(sampled_e_h_[2])
-
     num_steps = sampler_steps
     t = torch.ones(batch_size, device=device)
-    gen_n_hits = int(sampled_hits.item())
-    init_x = torch.randn(batch_size, gen_n_hits, 4, device=device)
-
-    # Pad initial input in same way input to model looked during training
-    pad_hits = padded_hits-sampled_hits
-    padded_shower = F.pad(input = init_x, pad=(0,0,0,pad_hits), mode='constant', value=-20)
-
     # Mean is the only thing related to input hits, std only related to conditional
-    mean_,std_ =  marginal_prob_std(padded_shower,t)
+    mean_,std_ = marginal_prob_std(init_x,t)
     std_.to(device)
     
-    time_steps = np.linspace(1., eps, num_steps)
-    step_size = time_steps[0]-time_steps[1]
-    x = padded_shower*std_[:,None,None]
-
     # Padding masks defined by initial # hits / zero padding
-    padding_mask = (x[:,:,0]==-20).type(torch.bool)
-
+    padding_mask = (init_x[:,:,0]==-20).type(torch.bool)
     # Inverse mask to ignore models output for 0-padded hits in loss
-    output_mask = (x[:,:,0]!=-20).type(torch.int)
+    output_mask = (init_x[:,:,0]!=-20).type(torch.int)
     output_mask = output_mask.unsqueeze(-1)
     output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
+    
+    init_x = init_x*std_[:,None,None]
+    time_steps = np.linspace(1., eps, num_steps)
+    step_size = time_steps[0]-time_steps[1]
+    
+    #sampled_energies = torch.tensor(sampled_e_h_[0])
+    #sampled_hits = torch.tensor(sampled_e_h_[1])
+    #padded_hits = torch.tensor(sampled_e_h_[2])
+    #gen_n_hits = int(sampled_hits.item())
+    #init_x = torch.randn(batch_size, gen_n_hits, 4, device=device)
+    # Pad initial input in same way input to model looked during training
+    #pad_hits = padded_hits-sampled_hits
+    #padded_shower = F.pad(input = init_x, pad=(0,0,0,pad_hits), mode='constant', value=-20)
+    #x = padded_shower*std_[:,None,None]
+    
+    if jupyternotebook:
+      time_steps = tqdm.notebook.tqdm(time_steps)
+    
+    x = init_x
 
     with torch.no_grad():
          for time_step in time_steps:
+            if not jupyternotebook:
+                print(f"Sampler step: {time_step:.4f}")
+                
             batch_time_step = torch.ones(batch_size, device=x.device) * time_step
             
             # matrix multiplication in GaussianFourier projection doesnt like float64
@@ -314,7 +319,9 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_e_h_, b
 
             # Noise to add to input (multiply by mask as we don't want to add noise to padded values)
             noise = torch.randn_like(x)
+            
             noise = noise * output_mask
+            grad = grad * output_mask
             
             # Vector norm (sqrt sum squares)
             # Take the mean value of the vector norm (sqrt sum squares), of the flattened scores for e,x,y,z
@@ -334,15 +341,52 @@ def  pc_sampler(score_model, marginal_prob_std, diffusion_coeff, sampled_e_h_, b
             x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * torch.randn_like(x)
             
     # Do not include noise in last step
-    # remove padded hits
-    x_mean = x_mean# * output_mask
+    # Need to remove padded hits?
+    x_mean = x_mean
     return x_mean
 
 def check_mem():
     # Resident set size memory (non-swap physical memory process has used)
     process = psutil.Process(os.getpid())
-    print('Memory usage of current process 0 [MB]: ', process.memory_info().rss/1000000)
+    # Print bytes in GB
+    print('Memory usage of current process 0 [GB]: ', process.memory_info().rss/(1024 * 1024 * 1024))
     return
+
+def random_sampler(pdf,xbin):
+    myCDF = np.zeros_like(xbin,dtype=float)
+    myCDF[1:] = np.cumsum(pdf)
+    a = np.random.uniform(0, 1)
+    return xbin[np.argmax(myCDF>=a)-1]
+
+def get_prob_dist(x,y,nbins):
+    '''
+    2D histogram:
+    x = incident energy per shower
+    y = # valid hits per shower
+    '''
+    hist,xbin,ybin = np.histogram2d(x,y,bins=nbins,density=False)
+    # Normalise histogram
+    sum_ = hist.sum(axis=-1)
+    sum_ = sum_[:,None]
+    hist = hist/sum_
+    # Remove NaN
+    hist[np.isnan(hist)] = 0.0
+    return hist, xbin, ybin
+
+def generate_hits(prob, xbin, ybin, x_vals, max_hits, n_features, device='cpu'):
+    ind = np.digitize(x_vals, xbin) - 1
+    ind[ind==len(xbin)-1] = len(xbin)-2
+    ind[ind==-1] = 0    
+    y_pred = []
+    pred_nhits = []
+    prob_ = prob[ind,:]
+    for i in range(len(prob_)):
+        nhits = int(random_sampler(prob_[i],ybin + 1))
+        pred_nhits.append(nhits)
+        y_pred.append(torch.randn(nhits, n_features, device=device))
+    
+    return pred_nhits, y_pred
+
 
 def main():
     usage=''
@@ -455,8 +499,8 @@ def main():
             all_incident_e = []
             for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
                 # Limit number fo showers to plot for memories sake
-                if i>500:
-                    break
+                #if i>500:
+                #    break
                 # Resident set size memory (non-swap physical memory process has used)
                 #process = psutil.Process(os.getpid())
                 #print(f'Memory usage of current process shower {i} [MB]: {process.memory_info().rss/1000000}')
@@ -661,34 +705,49 @@ def main():
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
         
-        batch_size = 1
+        batch_size = 64
         model=Gen(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
         load_name = os.path.join(workingdir,'training_VPSDE_beta50_nocls_20230519_1102_output/ckpt_tmp_499.pth')
 
         model.load_state_dict(torch.load(load_name, map_location=device))
         model.to(device)
         samples_ = []
-        in_energies = []
-        total_hits_lengths = []
-        real_hits_lengths = []
-        sampled_energies = []
-        # Use clouds from a sample of random files to generate a distribution of # hits
-        for idx_ in random.sample( range(0,len(files_list_)), 1):
-            custom_data = utils.cloud_dataset(files_list_[idx_], device=device)
-            point_clouds_loader = DataLoader(custom_data, batch_size=batch_size, shuffle=True)
-            for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
-                # Get nhits for examples in input file
-                total_hits = shower_data[0]
-                mask = total_hits[:,0].gt(-20.0)
-                real_hits = torch.masked_select(total_hits[:,0],mask)
-                real_hits_lengths.append( len(real_hits) )
-                total_hits_lengths.append( len(total_hits) )
-                # Get incident energies from input file
-                sampled_energies.append( incident_energies.tolist() )
         
-        # Stack
-        e_h_comb = list(zip(sampled_energies, real_hits_lengths, total_hits_lengths))
-        for s_ in range(0,n_sampler_calls):
+        # Generate 2D pdf from the training file
+        entries = []
+        all_incident_e = []
+        max_hits = -1
+        for file in sampled_file_list:
+            custom_data = util.dataset_structure.cloud_dataset(file, device=device)
+            point_clouds_loader = DataLoader(custom_data, batch_size=sample_batch_size, shuffle=False)
+
+            for i, (shower_data, incident_energies) in enumerate(point_clouds_loader,0):
+                valid_event = []
+                data_np = shower_data.cpu().numpy().copy()
+                energy_np = incident_energies.cpu().numpy().copy()
+
+                masking = data_np[:,:,3] > -10
+
+                for j in range(len(data_np)):
+                    valid_event = data_np[j][masking[j]]
+                    entries.append(len(valid_event))
+                    if len(valid_event)>max_hits:
+                        max_hits = len(valid_event)
+                    all_incident_e.append(energy_np[j]) 
+            del custom_data
+
+        entries = np.array(entries)
+        all_incident_e = np.array(all_incident_e)
+        e_vs_nhits_prob, x_bin, y_bin = trans_tdsm.get_prob_dist(all_incident_e, entries, n_bin)
+        nhits, gen_hits = generate_hits(e_vs_nhits_prob, x_bin, y_bin, in_energies, max_hits, 4, device=device)
+        torch.save([gen_hits, in_energies],'tmp.pt')
+
+        gen_hits = utils.cloud_dataset('tmp.pt', device=device, transform=transform, transform_y=transform_y)
+        gen_hits.padding(padding_value)
+        os.system("rm tmp.pt")
+        sample = []
+        gen_hits_loader = DataLoader(gen_hits, batch_size=sample_batch_size, shuffle=False)
+        for i, (gen_hit, sampled_energies) in enumerate(gen_hits_loader,0):
             # Generate random number to sample an example energy and nhits
             idx = np.random.randint(len(e_h_comb), size=1)[0]
             # Energies and hits to pass to sampler
@@ -698,7 +757,7 @@ def main():
             sampler = pc_sampler
             # Generate a sample of point clouds
             print(f'Generating shower: {s_}')
-            samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_e_h_, batch_size, sampler_steps, device=device)
+            samples = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, gen_hit, len(gen_hit), sampler_steps, device=device)
             samples_.append(samples)
         torch.save([samples_,torch.as_tensor(in_energies)], output_directory+'generated_samples.pt')
 

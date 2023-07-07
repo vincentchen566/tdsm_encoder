@@ -3,6 +3,7 @@ import numpy as np
 from torch.nn.functional import normalize
 from torch.utils.data import Dataset
 from sklearn.preprocessing import RobustScaler
+import torch.nn.functional as F
 
 class cloud_dataset(Dataset):
   def __init__(self, filename, transform=None, transform_y=None, device='cpu'):
@@ -11,6 +12,7 @@ class cloud_dataset(Dataset):
     self.condition = torch.as_tensor(loaded_file[1]).float()
     self.min_y = torch.min(self.condition)
     self.max_y = torch.max(self.condition)
+    self.max_nhits = -1
 
     self.transform = transform
     self.transform_y = transform_y
@@ -27,6 +29,19 @@ class cloud_dataset(Dataset):
   
   def __len__(self):
     return len(self.data)
+  
+  def padding(self, value = -20):
+    for showers in self.data:
+        if len(showers) > self.max_nhits:
+            self.max_nhits = len(showers)
+
+    padded_showers = []
+    for showers in self.data:
+      pad_hits = self.max_nhits-len(showers)
+      padded_shower = F.pad(input = showers, pad=(0,0,0,pad_hits), mode='constant', value = value)
+      padded_showers.append(padded_shower)
+
+    self.data = padded_showers
 
 class rescale_conditional:
   '''Convert hit energies to range |01)
@@ -37,7 +52,7 @@ class rescale_conditional:
      e0 = conditional
      u0 = (e0-emin)/(emax-emin)
      return u0
-
+    
 class rescale_energies:
         '''Convert hit energies to range |01)
         '''
