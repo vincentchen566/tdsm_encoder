@@ -309,7 +309,8 @@ class pc_sampler:
 
         if self.jupyternotebook:
             time_steps = tqdm.notebook.tqdm(time_steps)
-
+        
+        # Input shower is just some noise * std from SDE
         x = init_x
         diffusion_step_ = 0
         with torch.no_grad():
@@ -334,29 +335,33 @@ class pc_sampler:
                 noise = noise * output_mask
                 grad = grad * output_mask
 
-                # Take the mean value of the vector norm (sqrt sum squares), of the flattened scores for e,x,y,z
+                # Langevin step size calculation: snr * ratio of gradients in noise / prediction used to calculate
                 flattened_scores = grad.reshape(grad.shape[0], -1)
                 grad_norm = torch.linalg.norm( flattened_scores, dim=-1 ).mean()
                 flattened_noise = noise.reshape(noise.shape[0],-1)
                 noise_norm = torch.linalg.norm( flattened_noise, dim=-1 ).mean()
                 langevin_step_size =  (self.snr * noise_norm / grad_norm)**2 * 2 * alpha
 
-                # Implement iteration rule
+                # Adjust inputs according to scores using Langevin iteration rule
                 x_mean = x + langevin_step_size * grad
                 x = x_mean + torch.sqrt(2 * langevin_step_size) * noise
-
-                # Euler-Maruyama predictor step
+                
+                # Adjust inputs according to scores using Euler-Maruyama predictor iteration rule
                 drift, diff = diffusion_coeff(x,batch_time_step)
                 x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask) * step_size
                 x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * torch.randn_like(x)
                 
+                # Store distributions at different stages of diffusion
                 if diffusion_step_== 1:
+                    #print(f'# showers {len(x_mean)}')
+                    #print(f'diffusion_step_: {diffusion_step_}')
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
                         total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
                         self.deposited_energy_t1.append(total_deposited_energy.item())
                         incident_e = sampled_energies[shower_idx].cpu().numpy()
                         self.incident_e_t1.append(incident_e.item())
+                        #print(f'total_deposited_energy: {total_deposited_energy}')
                 
                 if diffusion_step_== 25:
                     for shower_idx in range(0,len(x_mean)):
@@ -367,12 +372,14 @@ class pc_sampler:
                         self.incident_e_t25.append(incident_e.item())
                 
                 if diffusion_step_== 50:
+                    #print(f'diffusion_step_: {diffusion_step_}')
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
                         total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
                         self.deposited_energy_t50.append(total_deposited_energy.item())
                         incident_e = sampled_energies[shower_idx].cpu().numpy()
                         self.incident_e_t50.append(incident_e.item())
+                        #print(f'total_deposited_energy: {total_deposited_energy}')
                 
                 if diffusion_step_== 75:
                     for shower_idx in range(0,len(x_mean)):
@@ -383,12 +390,14 @@ class pc_sampler:
                         self.incident_e_t75.append(incident_e.item())
                 
                 if diffusion_step_== 99:
+                    #print(f'diffusion_step_: {diffusion_step_}')
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
                         total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
                         self.deposited_energy_t99.append(total_deposited_energy.item())
                         incident_e = sampled_energies[shower_idx].cpu().numpy()
                         self.incident_e_t99.append(incident_e.item())
+                        #print(f'total_deposited_energy: {total_deposited_energy}')
 
         # Do not include noise in last step
         # Need to remove padded hits?
