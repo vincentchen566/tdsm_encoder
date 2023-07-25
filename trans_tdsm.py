@@ -11,6 +11,7 @@ from torch_geometric.data import Data
 from torch.utils.data import Dataset, DataLoader
 import tqdm
 from IPython import display
+from pickle import load
 #import torch.multiprocessing as mp
 #import wandb
 
@@ -281,13 +282,26 @@ class pc_sampler:
         self.deposited_energy_t50 = []
         self.deposited_energy_t75 = []
         self.deposited_energy_t99 = []
+        
+        self.av_x_pos_t1 = []
+        self.av_x_pos_t25 = []
+        self.av_x_pos_t50 = []
+        self.av_x_pos_t75 = []
+        self.av_x_pos_t99 = []
+        
+        self.av_y_pos_t1 = []
+        self.av_y_pos_t25 = []
+        self.av_y_pos_t50 = []
+        self.av_y_pos_t75 = []
+        self.av_y_pos_t99 = []
+        
         self.incident_e_t1 = []
         self.incident_e_t25 = []
         self.incident_e_t50 = []
         self.incident_e_t75 = []
         self.incident_e_t99 = []
     
-    def __call__(self, score_model, marginal_prob_std, diffusion_coeff, sampled_energies, init_x, batch_size=1):
+    def __call__(self, score_model, marginal_prob_std, diffusion_coeff, sampled_energies, init_x, batch_size=1, energy_trans_file='', x_trans_file='', y_trans_file='', ine_trans_file=''):
         
         t = torch.ones(batch_size, device=self.device)
         
@@ -353,51 +367,164 @@ class pc_sampler:
                 
                 # Store distributions at different stages of diffusion
                 if diffusion_step_== 1:
-                    #print(f'# showers {len(x_mean)}')
-                    #print(f'diffusion_step_: {diffusion_step_}')
+                    # Load saved pre-processor
+                    print(f'Loading file for hit e transformation inversion: {energy_trans_file}')
+                    if ine_trans_file != '':
+                        scalar_ine = load(open(ine_trans_file, 'rb'))
+                    if energy_trans_file != '':
+                        scalar_e = load(open(energy_trans_file, 'rb'))
+                    if x_trans_file != '':
+                        scalar_x = load(open(x_trans_file, 'rb'))
+                    if y_trans_file != '':
+                        scalar_y = load(open(y_trans_file, 'rb'))
+
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
-                        total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
-                        self.deposited_energy_t1.append(total_deposited_energy.item())
-                        incident_e = sampled_energies[shower_idx].cpu().numpy()
-                        self.incident_e_t1.append(incident_e.item())
-                        #print(f'total_deposited_energy: {total_deposited_energy}')
-                
+                        
+                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
+                        if ine_trans_file != '':
+                            all_ine = scalar_ine.inverse_transform(all_ine)
+                        all_ine = all_ine.flatten().tolist()[0]
+                        self.incident_e_t1.append( all_ine )
+                        
+                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
+                        if energy_trans_file != '':
+                            all_e = scalar_e.inverse_transform(all_e)
+                        all_e = all_e.flatten().tolist()
+                        total_deposited_energy = sum( all_e )
+                        self.deposited_energy_t1.append(total_deposited_energy)
+                        
+                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
+                        if x_trans_file != '':
+                            all_x = scalar_x.inverse_transform(all_x)
+                        all_x = all_x.flatten().tolist()
+                        av_x_position = np.mean( all_x )
+                        self.av_x_pos_t1.append( av_x_position )
+                        
+                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
+                        if y_trans_file != '':
+                            all_y = scalar_y.inverse_transform(all_y)
+                        all_y = all_y.flatten().tolist()
+                        av_y_position = np.mean( all_y )
+                        self.av_y_pos_t1.append( av_y_position )
+                        
+                        
                 if diffusion_step_== 25:
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
-                        total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
-                        self.deposited_energy_t25.append(total_deposited_energy.item())
-                        incident_e = sampled_energies[shower_idx].cpu().numpy()
-                        self.incident_e_t25.append(incident_e.item())
-                
+                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
+                        if ine_trans_file != '':
+                            all_ine = scalar_ine.inverse_transform(all_ine)
+                        all_ine = all_ine.flatten().tolist()[0]
+                        self.incident_e_t25.append( all_ine )
+                        
+                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
+                        if energy_trans_file != '':
+                            all_e = scalar_e.inverse_transform(all_e)
+                        all_e = all_e.flatten().tolist()
+                        total_deposited_energy = sum( all_e )
+                        self.deposited_energy_t25.append(total_deposited_energy)
+                        
+                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
+                        if x_trans_file != '':
+                            all_x = scalar_x.inverse_transform(all_x)
+                        all_x = all_x.flatten().tolist()
+                        av_x_position = np.mean( all_x )
+                        self.av_x_pos_t25.append( av_x_position )
+                        
+                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
+                        if y_trans_file != '':
+                            all_y = scalar_y.inverse_transform(all_y)
+                        all_y = all_y.flatten().tolist()
+                        av_y_position = np.mean( all_y )
+                        self.av_y_pos_t25.append( av_y_position )
                 if diffusion_step_== 50:
-                    #print(f'diffusion_step_: {diffusion_step_}')
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
-                        total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
-                        self.deposited_energy_t50.append(total_deposited_energy.item())
-                        incident_e = sampled_energies[shower_idx].cpu().numpy()
-                        self.incident_e_t50.append(incident_e.item())
-                        #print(f'total_deposited_energy: {total_deposited_energy}')
-                
+                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
+                        if ine_trans_file != '':
+                            all_ine = scalar_ine.inverse_transform(all_ine)
+                        all_ine = all_ine.flatten().tolist()[0]
+                        self.incident_e_t50.append( all_ine )
+                        
+                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
+                        if energy_trans_file != '':
+                            all_e = scalar_e.inverse_transform(all_e)
+                        all_e = all_e.flatten().tolist()
+                        total_deposited_energy = sum( all_e )
+                        self.deposited_energy_t50.append(total_deposited_energy)
+                        
+                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
+                        if x_trans_file != '':
+                            all_x = scalar_x.inverse_transform(all_x)
+                        all_x = all_x.flatten().tolist()
+                        av_x_position = np.mean( all_x )
+                        self.av_x_pos_t50.append( av_x_position )
+                        
+                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
+                        if y_trans_file != '':
+                            all_y = scalar_y.inverse_transform(all_y)
+                        all_y = all_y.flatten().tolist()
+                        av_y_position = np.mean( all_y )
+                        self.av_y_pos_t50.append( av_y_position )
                 if diffusion_step_== 75:
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
-                        total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
-                        self.deposited_energy_t75.append(total_deposited_energy.item())
-                        incident_e = sampled_energies[shower_idx].cpu().numpy()
-                        self.incident_e_t75.append(incident_e.item())
-                
+                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
+                        if ine_trans_file != '':
+                            all_ine = scalar_ine.inverse_transform(all_ine)
+                        all_ine = all_ine.flatten().tolist()[0]
+                        self.incident_e_t75.append( all_ine )
+                        
+                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
+                        if energy_trans_file != '':
+                            all_e = scalar_e.inverse_transform(all_e)
+                        all_e = all_e.flatten().tolist()
+                        total_deposited_energy = sum( all_e )
+                        self.deposited_energy_t75.append(total_deposited_energy)
+                        
+                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
+                        if x_trans_file != '':
+                            all_x = scalar_x.inverse_transform(all_x)
+                        all_x = all_x.flatten().tolist()
+                        av_x_position = np.mean( all_x )
+                        self.av_x_pos_t75.append( av_x_position )
+                        
+                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
+                        if y_trans_file != '':
+                            all_y = scalar_y.inverse_transform(all_y)
+                        all_y = all_y.flatten().tolist()
+                        av_y_position = np.mean( all_y )
+                        self.av_y_pos_t75.append( av_y_position )
                 if diffusion_step_== 99:
-                    #print(f'diffusion_step_: {diffusion_step_}')
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
-                        total_deposited_energy = torch.sum( masked_output[shower_idx,:,0] ).cpu().numpy()
-                        self.deposited_energy_t99.append(total_deposited_energy.item())
-                        incident_e = sampled_energies[shower_idx].cpu().numpy()
-                        self.incident_e_t99.append(incident_e.item())
-                        #print(f'total_deposited_energy: {total_deposited_energy}')
+                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
+                        if ine_trans_file != '':
+                            all_ine = scalar_ine.inverse_transform(all_ine)
+                        all_ine = all_ine.flatten().tolist()[0]
+                        self.incident_e_t99.append( all_ine )
+                        
+                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
+                        if energy_trans_file != '':
+                            all_e = scalar_e.inverse_transform(all_e)
+                        all_e = all_e.flatten().tolist()
+                        total_deposited_energy = sum( all_e )
+                        self.deposited_energy_t99.append(total_deposited_energy)
+                        
+                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
+                        if x_trans_file != '':
+                            all_x = scalar_x.inverse_transform(all_x)
+                        all_x = all_x.flatten().tolist()
+                        av_x_position = np.mean( all_x )
+                        self.av_x_pos_t99.append( av_x_position )
+                        
+                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
+                        if y_trans_file != '':
+                            all_y = scalar_y.inverse_transform(all_y)
+                        all_y = all_y.flatten().tolist()
+                        av_y_position = np.mean( all_y )
+                        self.av_y_pos_t99.append( av_y_position )
 
         # Do not include noise in last step
         # Need to remove padded hits?

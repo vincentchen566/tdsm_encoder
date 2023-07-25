@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import RobustScaler, PowerTransformer
+from sklearn.preprocessing import RobustScaler, PowerTransformer, QuantileTransformer
 from pickle import dump
 sys.path.insert(1, '../')
 import utils, psutil
@@ -53,17 +53,15 @@ def main():
     X_ = X_.reshape(-1, 1)
     Y_ = Y_.reshape(-1, 1)
     Z_ = Z_.reshape(-1, 1)
+    
+    # Transform inputs
     if transform == 1:
-        #transform_e = RobustScaler().fit(E_)
-        transform_e = PowerTransformer().fit(E_)
-        #transform_x = RobustScaler().fit(X_)
-        transform_x = PowerTransformer().fit(X_)
-        #transform_y = RobustScaler().fit(Y_)
-        transform_y = PowerTransformer().fit(Y_)
+        transform_e = QuantileTransformer(output_distribution='normal').fit(E_)
+        transform_x = QuantileTransformer(output_distribution='normal').fit(X_)
+        transform_y = QuantileTransformer(output_distribution='normal').fit(Y_)
     
     all_files_inenergy = torch.reshape(all_files_inenergy, (-1,1))
-    rescaler_y = RobustScaler().fit(all_files_inenergy)
-    #rescaler_y = PowerTransformer().fit(all_files_inenergy)
+    rescaler_y = QuantileTransformer(output_distribution='normal').fit(all_files_inenergy)
     
     # For each file
     for infile in os.listdir(indir):
