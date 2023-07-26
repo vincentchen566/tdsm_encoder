@@ -407,8 +407,6 @@ class pc_sampler:
                         all_y = all_y.flatten().tolist()
                         av_y_position = np.mean( all_y )
                         self.av_y_pos_t1.append( av_y_position )
-                        
-                        
                 if diffusion_step_== 25:
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
