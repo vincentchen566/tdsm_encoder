@@ -1,17 +1,17 @@
-import time, functools, torch, os, random, utils, fnmatch, psutil, argparse, math
-from prettytable import PrettyTable
+import time, functools, torch, os, sys, random, fnmatch, psutil, argparse
 from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam, RAdam
-import torchvision.transforms as transforms
-from torch_geometric.data import Data
 from torch.utils.data import Dataset, DataLoader
+import utils
+from prettytable import PrettyTable
+import util.dataset_structure, util.display, util.model
 import tqdm
-from IPython import display
 from pickle import load
+
 #import torch.multiprocessing as mp
 #import wandb
 
@@ -577,8 +577,10 @@ def main():
     argparser = argparse.ArgumentParser(usage)
     argparser.add_argument('-o','--output',dest='output_path', help='Path to output directory', default='', type=str)
     argparser.add_argument('-s','--switches',dest='switches', help='Binary representation of switches that run: evaluation plots, training, sampling, evaluation plots', default='0000', type=str)
+    argparser.add_argument('-i','--inputs',dest='inputs', help='Path to input directory', default='quantile_gauss_transformer', type=str)
     args = argparser.parse_args()
     workingdir = args.output_path
+    indir = args.inputs
     switches_ = int('0b'+args.switches,2)
     switches_str = bin(int('0b'+args.switches,2))
     trigger = 0b0001
@@ -593,8 +595,8 @@ def main():
         print('evaluation_plots_switch = ON')
 
     print('torch version: ', torch.__version__)
-
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     print('Running on device: ', device)
     if torch.cuda.is_available():
         print('Cuda used to build pyTorch: ',torch.version.cuda)
@@ -606,20 +608,22 @@ def main():
     # Useful when debugging gradient issues
     torch.autograd.set_detect_anomaly(True)
 
+    ### HYPERPARAMETERS ###
+    train_ratio = 0.8
+    batch_size = 64
+    lr = 0.00001
+    n_epochs = 5
     ### SDE PARAMETERS ###
     SDE = 'VE'
     sigma_max = 50.
     ### MODEL PARAMETERS ###
-    batch_size = 64
-    lr = 0.00001
-    n_epochs = 100
     n_feat_dim = 4
     embed_dim = 512
     hidden_dim = 128
     num_encoder_blocks = 3
     num_attn_heads = 8
     dropout_gen = 0
-    # SAMPLE PARAMETERS
+    # SAMPLER PARAMETERS
     n_sampler_calls = 100
     sampler_steps = 100
 
@@ -642,7 +646,6 @@ def main():
     n_sampler_calls = {n_sampler_calls}
     sampler_steps = {sampler_steps}
     '''
-    print(model_params)
     
     # Instantiate stochastic differential equation
     if SDE == 'VP':
@@ -653,118 +656,127 @@ def main():
     diffusion_coeff_fn = functools.partial(sde.sde)
 
     # List of training input files
-    training_file_path = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/datasets/'
+    #training_file_path = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/datasets/'
     #training_file_path = '/eos/user/t/tihsu/database/ML_hackthon/bucketed_tensor/'
+    training_file_path = os.path.join('/eos/user/j/jthomasw/tdsm_encoder/datasets/', indir)
     files_list_ = []
+    print(f'Training files found in: {training_file_path}')
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'padded_dataset_1_photons_nentry*.pt'):
+        if fnmatch.fnmatch(filename, 'dataset_1_photons_padded*.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
+    dataset_store_path = "/eos/user/j/jthomasw/tdsm_encoder/datasets/quantile_gauss_transformer/"
+
     #### Input plots ####
     if switches_ & trigger:
-        files_list_ = files_list_[:1]
-        for filename in files_list_:
-            print('filename: ', filename)
-            custom_data = utils.cloud_dataset(filename)
-            #custom_data = utils.cloud_dataset(filename, transform=utils.rescale_energies(), transform_y=utils.rescale_conditional())
-            #output_directory = workingdir+'/feature_plots_rescale_padded_dataset_1_photons_1_graph_0_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
-            output_directory = workingdir+'/feature_plots_padded_dataset_1_photons_1_tensor_euclidian_0_rescaled_xy_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
-            if not os.path.exists(output_directory):
-                os.makedirs(output_directory)
+        # Limit to N showers to use for plots
+        nshowers_2_plot = 100
+        # Transformed variables
+        dists_trans = util.display.plot_distribution(files_list_, nshowers_2_plot)
+        entries = dists_trans[0]
+        all_incident_e_trans = dists_trans[1]
+        total_deposited_e_shower_trans = dists_trans[2]
+        all_e_trans = dists_trans[3]
+        all_x_trans = dists_trans[4]
+        all_y_trans = dists_trans[5]
+        all_z_trans = dists_trans[6]
+        all_hit_ine_trans = dists_trans[7]
+        average_x_shower_trans = dists_trans[8]
+        average_y_shower_trans = dists_trans[9]
 
-            # Load input data
-            point_clouds_loader = DataLoader(custom_data,batch_size=1,shuffle=False)
-            n_hits = []
-            all_x = []
-            all_y = []
-            all_z = []
-            all_e = []
-            all_incident_e = []
-            for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
-                # Limit number fo showers to plot for memories sake
-                #if i>500:
-                #    break
-                # Resident set size memory (non-swap physical memory process has used)
-                #process = psutil.Process(os.getpid())
-                #print(f'Memory usage of current process shower {i} [MB]: {process.memory_info().rss/1000000}')
-                
-                hit_energies = shower_data[0][:,0]
-                hit_xs = shower_data[0][:,1]
-                hit_ys = shower_data[0][:,2]
-                hit_zs = shower_data[0][:,3]
+        # Non-transformed variables
+        dists = util.display.plot_distribution(files_list_, nshowers_2_plot, energy_trans_file='transform_e.pkl', x_trans_file='transform_x.pkl', y_trans_file='transform_y.pkl', ine_trans_file='rescaler_y.pkl')
+        entries = dists[0]
+        all_incident_e = dists[1]
+        total_deposited_e_shower = dists[2]
+        all_e = dists[3]
+        all_x = dists[4]
+        all_y = dists[5]
+        all_z = dists[6]
+        all_hit_ine = dists[7]
+        average_x_shower = dists[8]
+        average_y_shower = dists[9]
 
-                mask = hit_energies.gt(-20.0)
+        ### 2D distributions
+        
+        distributions = [(('X', 'Hit energy [GeV]', 'Incident energy [GeV]') , (all_x, all_e, all_hit_ine, all_x_trans, all_e_trans, all_hit_ine_trans))]
+        util.display.make_plot(distributions,training_file_path)
 
-                real_hit_energies = torch.masked_select(hit_energies,mask)
-                real_hit_xs = torch.masked_select(hit_xs,mask)
-                real_hit_ys = torch.masked_select(hit_ys,mask)
-                real_hit_zs = torch.masked_select(hit_zs,mask)
+        distributions = [(('Incident energy [GeV]', 'Hit energy [GeV]', 'Incident energy [GeV]') , (all_hit_ine, all_e, all_hit_ine, all_hit_ine_trans, all_e_trans, all_hit_ine_trans))]
+        util.display.make_plot(distributions,training_file_path)
 
-                real_hit_energies = real_hit_energies.tolist()
-                real_hit_xs = real_hit_xs.tolist()
-                real_hit_ys = real_hit_ys.tolist()
-                real_hit_zs = real_hit_zs.tolist()
-                
-                n_hits.append( len(real_hit_energies) )
-                all_e.append(real_hit_energies)
-                all_x.append(real_hit_xs)
-                all_y.append(real_hit_ys)
-                all_z.append(real_hit_zs)
-                all_incident_e.append(incident_energies.item())
+        distributions = [(('Av. X Position', 'Av. Y Position', 'Incident energy [GeV]') , (average_x_shower, average_y_shower, all_incident_e, average_x_shower_trans, average_y_shower_trans, all_incident_e_trans))]
+        util.display.make_plot(distributions,training_file_path)
 
-            plot_e = np.concatenate(all_e)
-            plot_x = np.concatenate(all_x)
-            plot_y = np.concatenate(all_y)
-            plot_z = np.concatenate(all_z)
-            
-            fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-            plt.title('')
-            plt.ylabel('# entries')
-            plt.xlabel('# Hits')
-            plt.hist(n_hits, 100, label='Geant4')
-            plt.legend(loc='upper right')
-            fig.savefig(output_directory+'nhit.png')
-            
-            fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-            plt.title('')
-            plt.ylabel('# entries')
-            plt.xlabel('Hit energy')
-            plt.hist(plot_e, 100, label='Geant4')
-            plt.legend(loc='upper right')
-            fig.savefig(output_directory+'hit_energies.png')
+        distributions = [(('Incident energy [GeV]', 'Av. Energy Deposited [GeV]', 'Incident energy [GeV]') , (all_incident_e, total_deposited_e_shower, all_incident_e, all_incident_e_trans, total_deposited_e_shower_trans, all_incident_e_trans))]
+        util.display.make_plot(distributions,training_file_path)
 
-            fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-            plt.title('')
-            plt.ylabel('# entries')
-            plt.xlabel('Hit x position')
-            plt.hist(plot_x, 100, label='Geant4')
-            plt.legend(loc='upper right')
-            fig.savefig(output_directory+'hit_x.png')
+        fig, ax = plt.subplots(3,3, figsize=(12,12))
+        print('Plot # entries')
+        ax[0][0].set_ylabel('# entries')
+        ax[0][0].set_xlabel('Hit entries')
+        ax[0][0].hist(entries, 50, color='orange', label='Geant4')
+        ax[0][0].legend(loc='upper right')
 
-            fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-            plt.title('')
-            plt.ylabel('# entries')
-            plt.xlabel('Hit y position')
-            plt.hist(plot_y, 100, label='Geant4')
-            plt.legend(loc='upper right')
-            fig.savefig(output_directory+'hit_y.png')
+        print('Plot hit energies')
+        ax[0][1].set_ylabel('# entries')
+        ax[0][1].set_xlabel('Hit energy [GeV]')
+        ax[0][1].hist(all_e_trans, 50, color='orange', label='Geant4')
+        ax[0][1].set_yscale('log')
+        ax[0][1].legend(loc='upper right')
 
-            fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-            plt.title('')
-            plt.ylabel('# entries')
-            plt.xlabel('Hit z position')
-            plt.hist(plot_z, 50, label='Geant4')
-            plt.legend(loc='upper right')
-            fig.savefig(output_directory+'hit_z.png')
+        print('Plot hit x')
+        ax[0][2].set_ylabel('# entries')
+        ax[0][2].set_xlabel('Hit x position')
+        ax[0][2].hist(all_x_trans, 50, color='orange', label='Geant4')
+        ax[0][2].set_yscale('log')
+        ax[0][2].legend(loc='upper right')
 
-            fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-            plt.title('')
-            plt.ylabel('# entries')
-            plt.xlabel('Incident energy')
-            plt.hist(all_incident_e, 100, label='Geant4')
-            plt.legend(loc='upper right')
-            fig.savefig(output_directory+'hit_incident_e.png')
+        print('Plot hit y')
+        ax[1][0].set_ylabel('# entries')
+        ax[1][0].set_xlabel('Hit y position')
+        ax[1][0].hist(all_y_trans, 50, color='orange', label='Geant4')
+        ax[1][0].set_yscale('log')
+        ax[1][0].legend(loc='upper right')
+
+        print('Plot hit z')
+        ax[1][1].set_ylabel('# entries')
+        ax[1][1].set_xlabel('Hit z position')
+        ax[1][1].hist(all_z_trans, color='orange', label='Geant4')
+        ax[1][1].set_yscale('log')
+        ax[1][1].legend(loc='upper right')
+
+        print('Plot incident energies')
+        ax[1][2].set_ylabel('# entries')
+        ax[1][2].set_xlabel('Incident energies [GeV]')
+        ax[1][2].hist(all_incident_e_trans, 50, color='orange', label='Geant4')
+        ax[1][2].set_yscale('log')
+        ax[1][2].legend(loc='upper right')
+
+        print('Plot total deposited hit energy per shower')
+        ax[2][0].set_ylabel('# entries')
+        ax[2][0].set_xlabel('Deposited energy [GeV]')
+        ax[2][0].hist(total_deposited_e_shower_trans, 50, color='orange', label='Geant4')
+        ax[2][0].set_yscale('log')
+        ax[2][0].legend(loc='upper right')
+
+        print('Plot av. X position per shower')
+        ax[2][1].set_ylabel('# entries')
+        ax[2][1].set_xlabel('Average X position [GeV]')
+        ax[2][1].hist(average_x_shower_trans, 50, color='orange', label='Geant4')
+        ax[2][1].set_yscale('log')
+        ax[2][1].legend(loc='upper right')
+
+        print('Plot av. Y position per shower')
+        ax[2][2].set_ylabel('# entries')
+        ax[2][2].set_xlabel('Average Y position [GeV]')
+        ax[2][2].hist(average_y_shower_trans, 50, color='orange', label='Geant4')
+        ax[2][2].set_yscale('log')
+        ax[2][2].legend(loc='upper right')
+
+        save_name = os.path.join(training_file_path,'input_dists_transformed.png')
+        fig.savefig(save_name)
 
     #### Training ####
     if switches_>>1 & trigger:
@@ -774,11 +786,6 @@ def main():
             os.makedirs(output_directory)
         
         model=Gen(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
-        print('model: ', model)
-        if torch.cuda.device_count() > 1:
-            print(f'Lets use {torch.cuda.device_count()} GPUs!')
-            model = nn.DataParallel(model)
-
         table = PrettyTable(['Module name', 'Parameters listed'])
         t_params = 0
         for name_ , para_ in model.named_parameters():
@@ -787,14 +794,14 @@ def main():
             table.add_row([name_, param])
             t_params+=param
         print(table)
-        print(f'Sum of trained parameters: {t_params}')
-        with open(workingdir+'model_params.txt','w') as f:
-            f.write(model_params)
-            f.write(f'Sum of trained parameters: {t_params}\n')
-            f.write(str(table))
+        print(f'Sum of trainable parameters: {t_params}')    
+        
+        print('model: ', model)
+        if torch.cuda.device_count() > 1:
+            print(f'Lets use {torch.cuda.device_count()} GPUs!')
+            model = nn.DataParallel(model)
 
         # Optimiser needs to know model parameters for to optimise
-        #optimiser = Adam(model.parameters(),lr=lr)
         optimiser = RAdam(model.parameters(),lr=lr)
         
         av_training_losses_per_epoch = []
@@ -808,29 +815,32 @@ def main():
             file_counter = 0
             n_training_showers = 0
             n_testing_showers = 0
-            
-            # Load files
+            training_batches_per_epoch = 0
+            testing_batches_per_epoch = 0
             
             # For debugging purposes
-            #files_list_ = files_list_[:1]
-            
+            files_list_ = files_list_[:1]
+
+            # Load files
             for filename in files_list_:
                 file_counter+=1
 
                 # Rescaling now done in padding package
                 custom_data = utils.cloud_dataset(filename, device=device)
-                train_size = int(0.9 * len(custom_data.data))
+                train_size = int(train_ratio * len(custom_data.data))
                 test_size = len(custom_data.data) - train_size
                 train_dataset, test_dataset = torch.utils.data.random_split(custom_data, [train_size, test_size])
                 print(f'Size of training dataset in (file {file_counter}/{len(files_list_)}): {len(train_dataset)} showers, batch = {batch_size} showers')
 
                 n_training_showers+=train_size
                 n_testing_showers+=test_size
-            
                 # Load clouds for each epoch of data dataloaders length will be the number of batches
                 shower_loader_train = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-                print(f'N batches: {len(shower_loader_train)}')
                 shower_loader_test = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+
+                # Accumuate number of batches per epoch
+                training_batches_per_epoch += len(shower_loader_train)
+                testing_batches_per_epoch += len(shower_loader_test)
                 
                 # Load shower batch for training
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
@@ -848,7 +858,7 @@ def main():
                     loss = loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, device=device)
                     cumulative_epoch_loss+=float(loss)
                     # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
-                    loss.backward(retain_graph=True)
+                    loss.backward()
                     # Update value of x += -lr * x.grad
                     optimiser.step()
                 
@@ -856,20 +866,31 @@ def main():
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_test,0):
                     with torch.no_grad():
                         model.eval()
+                        shower_data = shower_data.to(device)
+                        incident_energies = incident_energies.to(device)
                         test_loss = loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, device=device)
                         cumulative_test_epoch_loss+=float(test_loss)
 
             # Add the batch size just used to the total number of clouds
-            av_training_losses_per_epoch.append(cumulative_epoch_loss/len(shower_loader_train))
-            av_testing_losses_per_epoch.append(cumulative_test_epoch_loss/len(shower_loader_test))
+            # Calculate average loss per epoch
+            av_training_losses_per_epoch.append(cumulative_epoch_loss/training_batches_per_epoch)
+            av_testing_losses_per_epoch.append(cumulative_test_epoch_loss/testing_batches_per_epoch)
             print(f'End-of-epoch: average train loss = {av_training_losses_per_epoch}, average test loss = {av_testing_losses_per_epoch}')
             if epoch % 50 == 0:
                 # Save checkpoint file after each epoch
                 torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
+                fig, ax = plt.subplots(ncols=1, figsize=(10,10))
+                plt.title('')
+                plt.ylabel('Loss')
+                plt.xlabel('Epoch')
+                plt.yscale('log')
+                plt.plot(av_training_losses_per_epoch, label='training')
+                plt.plot(av_testing_losses_per_epoch, label='testing')
+                plt.legend(loc='upper right')
+                plt.tight_layout()
+                fig.savefig(output_directory+'loss_v_epoch.png')
         
         torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
-        av_training_losses_per_epoch = av_training_losses_per_epoch
-        av_testing_losses_per_epoch = av_testing_losses_per_epoch
         print('Training losses : ', av_training_losses_per_epoch)
         print('Testing losses : ', av_testing_losses_per_epoch)
         fig, ax = plt.subplots(ncols=1, figsize=(10,10))

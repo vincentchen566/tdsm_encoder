@@ -242,7 +242,7 @@ def plot_xy(axes, X1, X2, y, ax_colorbar, hist_nbins=50, zlabel="", x0_label="",
     y = minmax_scale(y_full)
     
     # The scatter plot
-    cmap = getattr(cm, "plasma_r", cm.hot_r)
+    cmap = cm.get_cmap('winter')
     
     ax, hist_X2, hist_X1 = axes
     ax.set_title(name)
@@ -280,9 +280,9 @@ def plot_xy(axes, X1, X2, y, ax_colorbar, hist_nbins=50, zlabel="", x0_label="",
     )
     return
 
-def make_plot(distributions):
+def make_plot(distributions, outdir=''):
     
-    fig = plt.figure(figsize=(10, 5))
+    fig = plt.figure(figsize=(12, 8))
     
     X1, X2, y_X, T1, T2, y_T = distributions[0][1]
     xlabel, ylabel, zlabel = distributions[0][0]
@@ -303,7 +303,6 @@ def make_plot(distributions):
         zlabel=zlabel,
         name=title
     )
-    fig.savefig(title+'.png')
     
     title='Transformed'
     plot_xy(
@@ -318,7 +317,12 @@ def make_plot(distributions):
         zlabel=zlabel,
         name=title
     )
-    fig.savefig(title+'.png')
+    
+    save_name = xlabel+'_'+ylabel+'.png'
+    save_name = save_name.replace(' ','').replace('[','').replace(']','')
+    print(f'save_name: {save_name}')
+    fig.savefig(os.path.join(outdir,save_name))
+    
     return
 
 def create_axes_diffusion(n_plots):
