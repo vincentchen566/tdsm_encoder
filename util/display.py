@@ -328,34 +328,46 @@ def make_plot(distributions, outdir=''):
 def create_axes_diffusion(n_plots):
     
     axes_ = ()
-
-    # define the axis for the first plot
-    left, width = 0.1, 0.22
+    
+    # Define the axis for the first plot
+    # Histogram width
+    width_h = 0.02
+    left = 0.02
+    width_buffer = 0.05
+    # Scatter plot width
+    width = (1-(n_plots*(width_h+width_buffer))-left)/n_plots
     bottom, height = 0.1, 0.7
     bottom_h = height + 0.15
     left_h = left + width + 0.02
 
     rect_scatter = [left, bottom, width, height]
     rect_histx = [left, bottom_h, width, 0.1]
-    rect_histy = [left_h, bottom, 0.05, height]
+    rect_histy = [left_h, bottom, width_h, height]
 
+    # Add axes with dimensions above in normalized units
     ax_scatter = plt.axes(rect_scatter)
+    # Horizontal histogram along x-axis (Top)
     ax_histx = plt.axes(rect_histx)
+    # Vertical histogram along y-axis (RHS)
     ax_histy = plt.axes(rect_histy)
     
     axes_ += ((ax_scatter, ax_histy, ax_histx),)
     
     # define the axis for the next plots
     for idx in range(0,n_plots-1):
-        left = left + width + 0.22
-        left_h = left + width + 0.02
+        print(idx)
+        #left = left + width + 0.22
+        left = left + width + width_h + width_buffer
+        left_h = left + width + 0.01
 
         rect_scatter = [left, bottom, width, height]
         rect_histx = [left, bottom_h, width, 0.1]
-        rect_histy = [left_h, bottom, 0.05, height]
+        rect_histy = [left_h, bottom, width_h, height]
 
         ax_scatter_diff = plt.axes(rect_scatter)
+        # Horizontal histogram along x-axis (Top)
         ax_histx_diff = plt.axes(rect_histx)
+        # Vertical histogram along y-axis (RHS)
         ax_histy_diff = plt.axes(rect_histy)
         
         axes_ += ((ax_scatter_diff, ax_histy_diff, ax_histx_diff),)
@@ -396,32 +408,17 @@ def plot_diffusion_xy(axes, X1, X2, GX1, GX2, hist_nbins=50, x0_label="", x1_lab
     
     return
 
-def make_diffusion_plot(distributions, xlabel='', ylabel=''):
+def make_diffusion_plot(distributions, outdir=''):
     
-    fig = plt.figure(figsize=(10, 5))
+    fig = plt.figure(figsize=(50, 10))
+    #fig.set_tight_layout(True)
+
+    xlabel, ylabel = distributions[0][0]
+    # Geant4/Gen distributions for x- and y-axes
+    geant_x, geant_y, gen_x_t1, gen_y_t1, gen_x_t25, gen_y_t25, gen_x_t50, gen_y_t50, gen_x_t75, gen_y_t75, gen_x_t99, gen_y_t99  = distributions[0][1]
     
     # Number of plots depends on the number of diffusion steps to plot
-    n_plots = (len(distributions)-2)/2
-    
-    # Geant4 distributions for x- and y-axes
-    geant_x = distributions[0]
-    geant_y = distributions[1]
-    
-    # Generated distributions for x- and y-axes at different diffusion steps
-    gen_x_t1 = distributions[2]
-    gen_y_t1 = distributions[3]
-    
-    gen_x_t25 = distributions[4]
-    gen_y_t25 = distributions[5]
-    
-    gen_x_t50 = distributions[6]
-    gen_y_t50 = distributions[7]
-    
-    gen_x_t75 = distributions[8]
-    gen_y_t75 = distributions[9]
-    
-    gen_x_t99 = distributions[10]
-    gen_y_t99 = distributions[11]
+    n_plots = (len(distributions[0][1])-2)/2
     
     # Labels of variables to plot
     ax_X, ax_T1, ax_T2, ax_T3, ax_T4 = create_axes_diffusion(int(n_plots))
@@ -499,5 +496,12 @@ def make_diffusion_plot(distributions, xlabel='', ylabel=''):
         xlim=x_lim,
         ylim=y_lim
     )
+    print(f'plt.axis(): {plt.axis()}')
+
+    save_name = xlabel+'_'+ylabel+'.png'
+    save_name = save_name.replace(' ','').replace('[','').replace(']','')
+    save_name = os.path.join(outdir,save_name)
+    print(f'save_name: {save_name}')
+    fig.savefig(save_name)
 
     return
