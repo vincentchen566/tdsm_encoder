@@ -84,7 +84,9 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 valid_hits = []
                 data_np = shower_data.cpu().numpy().copy()
                 incident_energies = incident_energies.cpu().numpy().copy()
+                # Mask for padded values
                 mask = ~(data_np[:,:,3] == padding_value)
+                print(f'display.py mask: {mask}')
                 
                 incident_energies = np.array(incident_energies).reshape(-1,1)
                 if ine_trans_file != '':
@@ -381,8 +383,8 @@ def plot_diffusion_xy(axes, X1, X2, GX1, GX2, hist_nbins=50, x0_label="", x1_lab
     ax.set_title(name)
     ax.set_xlabel(x0_label)
     ax.set_ylabel(x1_label)
-    ax.scatter(X1, X2, alpha=0.5, marker="o", s=5, lw=0, c='blue',label='Gen')
-    ax.scatter(GX1, GX2, alpha=0.5, marker="o", s=5, lw=0, c='orange',label='Geant4')
+    ax.scatter(GX1, GX2, alpha=0.3, marker="o", s=5, lw=0, c='orange',label='Geant4')
+    ax.scatter(X1, X2, alpha=0.3, marker="o", s=5, lw=0, c='blue',label='Gen')
     ax.set_xlim(xlim[0],xlim[1])
     ax.set_ylim(ylim[0],ylim[1])
     ax.legend(loc='upper left')

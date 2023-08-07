@@ -225,18 +225,15 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     
     # Tensor of randomised conditional variable 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
-    
     # Noise input
     # Multiply by mask so we don't go perturbing zero padded values to have some non-sentinel value
     z = torch.randn_like(x)*output_mask
     z = z.to(device)
-    
     # Sample from standard deviation of noise
     mean_, std_ = marginal_prob_std(x,random_t)
-    
     # Add noise to input
     perturbed_x = x + z * std_[:, None, None]
-    
+
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
     scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
     
@@ -328,6 +325,16 @@ class pc_sampler:
         x = init_x
         diffusion_step_ = 0
         with torch.no_grad():
+             # Load saved pre-processor
+             # print(f'Loading file for hit e transformation inversion: {energy_trans_file}')
+             if ine_trans_file != '':
+                 scalar_ine = load(open(ine_trans_file, 'rb'))
+             if energy_trans_file != '':
+                 scalar_e = load(open(energy_trans_file, 'rb'))
+             if x_trans_file != '':
+                 scalar_x = load(open(x_trans_file, 'rb'))
+             if y_trans_file != '':
+                 scalar_y = load(open(y_trans_file, 'rb'))
              for time_step in time_steps:
                 diffusion_step_+=1
                 if not self.jupyternotebook:
@@ -364,23 +371,12 @@ class pc_sampler:
                 drift, diff = diffusion_coeff(x,batch_time_step)
                 x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask) * step_size
                 x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * torch.randn_like(x)
-                
+
                 # Store distributions at different stages of diffusion
                 if diffusion_step_== 1:
-                    # Load saved pre-processor
-                    print(f'Loading file for hit e transformation inversion: {energy_trans_file}')
-                    if ine_trans_file != '':
-                        scalar_ine = load(open(ine_trans_file, 'rb'))
-                    if energy_trans_file != '':
-                        scalar_e = load(open(energy_trans_file, 'rb'))
-                    if x_trans_file != '':
-                        scalar_x = load(open(x_trans_file, 'rb'))
-                    if y_trans_file != '':
-                        scalar_y = load(open(y_trans_file, 'rb'))
 
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
-                        
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
                         if ine_trans_file != '':
                             all_ine = scalar_ine.inverse_transform(all_ine)
@@ -571,7 +567,6 @@ def generate_hits(prob, xbin, ybin, x_vals, max_hits, n_features, device='cpu'):
     
     return pred_nhits, y_pred
 
-
 def main():
     usage=''
     argparser = argparse.ArgumentParser(usage)
@@ -610,9 +605,9 @@ def main():
 
     ### HYPERPARAMETERS ###
     train_ratio = 0.8
-    batch_size = 64
+    batch_size = 128
     lr = 0.00001
-    n_epochs = 5
+    n_epochs = 500
     ### SDE PARAMETERS ###
     SDE = 'VE'
     sigma_max = 50.
@@ -625,7 +620,7 @@ def main():
     dropout_gen = 0
     # SAMPLER PARAMETERS
     sampler_steps = 100
-    n_showers_2_gen = 64
+    n_showers_2_gen = 100
 
     model_params = f'''
     ### PARAMS ###
@@ -656,8 +651,6 @@ def main():
     diffusion_coeff_fn = functools.partial(sde.sde)
 
     # List of training input files
-    #training_file_path = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/datasets/'
-    #training_file_path = '/eos/user/t/tihsu/database/ML_hackthon/bucketed_tensor/'
     training_file_path = os.path.join('/eos/user/j/jthomasw/tdsm_encoder/datasets/', indir)
     files_list_ = []
     print(f'Training files found in: {training_file_path}')
@@ -666,14 +659,11 @@ def main():
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
-    #dataset_store_path = "/eos/user/j/jthomasw/tdsm_encoder/datasets/quantile_gauss_transformer/"
-
     #### Input plots ####
     if switches_ & trigger:
-        # Limit to N showers to use for plots
-        nshowers_2_plot = 100
+        # Limited to n_showers_2_gen showers in for plots
         # Transformed variables
-        dists_trans = util.display.plot_distribution(files_list_, nshowers_2_plot)
+        dists_trans = util.display.plot_distribution(files_list_, n_showers_2_gen)
         entries = dists_trans[0]
         all_incident_e_trans = dists_trans[1]
         total_deposited_e_shower_trans = dists_trans[2]
@@ -686,7 +676,7 @@ def main():
         average_y_shower_trans = dists_trans[9]
 
         # Non-transformed variables
-        dists = util.display.plot_distribution(files_list_, nshowers_2_plot, energy_trans_file='transform_e.pkl', x_trans_file='transform_x.pkl', y_trans_file='transform_y.pkl', ine_trans_file='rescaler_y.pkl')
+        dists = util.display.plot_distribution(files_list_, n_showers_2_gen, energy_trans_file='transform_e.pkl', x_trans_file='transform_x.pkl', y_trans_file='transform_y.pkl', ine_trans_file='rescaler_y.pkl')
         entries = dists[0]
         all_incident_e = dists[1]
         total_deposited_e_shower = dists[2]
@@ -698,20 +688,28 @@ def main():
         average_x_shower = dists[8]
         average_y_shower = dists[9]
 
-        ### 2D distributions
-        
+        ### 2D scatter plots
+        print('Plot individual X vs. individual hit energy')
         distributions = [(('X', 'Hit energy [GeV]', 'Incident energy [GeV]') , (all_x, all_e, all_hit_ine, all_x_trans, all_e_trans, all_hit_ine_trans))]
         util.display.make_plot(distributions,training_file_path)
 
+        print('Plot incident vs. individual hit energy')
         distributions = [(('Incident energy [GeV]', 'Hit energy [GeV]', 'Incident energy [GeV]') , (all_hit_ine, all_e, all_hit_ine, all_hit_ine_trans, all_e_trans, all_hit_ine_trans))]
         util.display.make_plot(distributions,training_file_path)
 
+        print('Plot average X vs. avergaeY')
         distributions = [(('Av. X Position', 'Av. Y Position', 'Incident energy [GeV]') , (average_x_shower, average_y_shower, all_incident_e, average_x_shower_trans, average_y_shower_trans, all_incident_e_trans))]
         util.display.make_plot(distributions,training_file_path)
 
+        print('Plot average X vs. average hit energy')
+        distributions = [(('Av. X Position', 'Av. Energy Deposited [GeV]', 'Incident energy [GeV]') , (average_x_shower, total_deposited_e_shower, all_incident_e, average_x_shower_trans, total_deposited_e_shower_trans, all_incident_e_trans))]
+        util.display.make_plot(distributions,training_file_path)
+
+        print('Plot incident vs. average hit energy')
         distributions = [(('Incident energy [GeV]', 'Av. Energy Deposited [GeV]', 'Incident energy [GeV]') , (all_incident_e, total_deposited_e_shower, all_incident_e, all_incident_e_trans, total_deposited_e_shower_trans, all_incident_e_trans))]
         util.display.make_plot(distributions,training_file_path)
 
+        ### 1D histograms
         fig, ax = plt.subplots(3,3, figsize=(12,12))
         print('Plot # entries')
         ax[0][0].set_ylabel('# entries')
@@ -915,7 +913,7 @@ def main():
         
         # Load saved model
         model=Gen(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
-        load_name = os.path.join(workingdir,'training_20230727_1756_output/ckpt_tmp_4.pth')
+        load_name = os.path.join(workingdir,'training_20230802_1816_output/ckpt_tmp_50.pth')
         model.load_state_dict(torch.load(load_name, map_location=device))
         model.to(device)
 
@@ -926,7 +924,8 @@ def main():
         geant_x_pos = []
         geant_y_pos = []
         geant_ine = []
-        N_geant_showers = 0
+        N_geant_showers_per_file = 0
+        N_geant_showers_total = 0
         max_hits = -1
 
         # For diffusion plots in 'physical' feature space, add files here
@@ -946,58 +945,73 @@ def main():
         if y_trans_file != '':
             scalar_y = load(open(y_trans_file, 'rb'))
         
+        if len(files_list_) > n_showers_2_gen:
+            print('WARNING: you are generating less showers than you have # files')
+            print('Will take one shower per file until n_showers_2_gen is reached')
+            n_showers_per_file = 1
+        else:
+            n_showers_per_file = n_showers_2_gen/len(files_list_)
+
         for file in files_list_:
             # Load shower data
             custom_data = utils.cloud_dataset(file, device=device)
-            point_clouds_loader = DataLoader(custom_data, batch_size=batch_size, shuffle=False)
+            point_clouds_loader = DataLoader(custom_data, batch_size=batch_size, shuffle=True)
             # Loop over batches
+            N_geant_showers_per_file = 0
             for i, (shower_data, incident_energies) in enumerate(point_clouds_loader,0):
-
                 # Copy data
                 valid_event = []
                 data_np = shower_data.cpu().numpy().copy()
                 energy_np = incident_energies.cpu().numpy().copy()
-
-                # Mask for padded values
+                # Mask for padded values (padded values set to 0)
                 masking = data_np[:,:,0] != -20
+                print(f'trans_tdsm.py masking: {masking}')
                 
                 # Loop over each shower in batch
                 for j in range(len(data_np)):
                     # Mask padded hits and count valid hits for shower j in batch
                     valid_hits = data_np[j][masking[j]]
-                    n_valid_hits_per_shower.append(len(valid_hits))
                     if len(valid_hits)>max_hits:
                         max_hits = len(valid_hits)
-                    incident_e_per_shower.append(energy_np[j])
-
+                    
                     # ONLY for plotting purposes
-                    if N_geant_showers < n_showers_2_gen:
-                        all_ine = np.array(energy_np[j]).reshape(-1,1)
-                        # Rescale the conditional input for each shower
-                        if ine_trans_file != '':
-                            all_ine = scalar_ine.inverse_transform(all_ine)
-                        all_ine = all_ine.flatten().tolist()
-                        geant_ine.append(all_ine)
-                        
-                        all_e = valid_hits[:,0].reshape(-1,1)
-                        if energy_trans_file != '':
-                            all_e = scalar_e.inverse_transform(all_e)
-                        all_e = all_e.flatten().tolist()
-                        geant_deposited_energy.append( sum( all_e ) )
-                        
-                        all_x = valid_hits[:,1].reshape(-1,1)
-                        if x_trans_file != '':
-                            all_x = scalar_x.inverse_transform(all_x)
-                        all_x = all_x.flatten().tolist()
-                        geant_x_pos.append( np.mean(all_x) )
-                        
-                        all_y = valid_hits[:,2].reshape(-1,1)
-                        if y_trans_file != '':
-                            all_y = scalar_y.inverse_transform(all_y)
-                        all_y = all_y.flatten().tolist()
-                        geant_y_pos.append( np.mean(all_y) )
-
-                    N_geant_showers+=1
+                    # Skip if already generated enough total showers
+                    if N_geant_showers_total >= n_showers_2_gen:
+                        break
+                    # If we still want more showers to reach total desired
+                    else:
+                        # If we still want more showers from this file
+                        if N_geant_showers_per_file < n_showers_per_file:
+                            incident_e_per_shower.append(energy_np[j])
+                            n_valid_hits_per_shower.append(len(valid_hits))
+                            N_geant_showers_total+=1
+                            N_geant_showers_per_file+=1
+                            all_ine = np.array(energy_np[j]).reshape(-1,1)
+                            # Rescale the conditional input for each shower
+                            if ine_trans_file != '':
+                                all_ine = scalar_ine.inverse_transform(all_ine)
+                            all_ine = all_ine.flatten().tolist()
+                            geant_ine.append(all_ine)
+                            
+                            all_e = valid_hits[:,0].reshape(-1,1)
+                            if energy_trans_file != '':
+                                all_e = scalar_e.inverse_transform(all_e)
+                            all_e = all_e.flatten().tolist()
+                            geant_deposited_energy.append( sum( all_e ) )
+                            
+                            all_x = valid_hits[:,1].reshape(-1,1)
+                            if x_trans_file != '':
+                                all_x = scalar_x.inverse_transform(all_x)
+                            all_x = all_x.flatten().tolist()
+                            geant_x_pos.append( np.mean(all_x) )
+                            
+                            all_y = valid_hits[:,2].reshape(-1,1)
+                            if y_trans_file != '':
+                                all_y = scalar_y.inverse_transform(all_y)
+                            all_y = all_y.flatten().tolist()
+                            geant_y_pos.append( np.mean(all_y) )
+                        else:
+                            break
             del custom_data
 
         # Arrays of Nvalid hits in showers, incident energies per shower
@@ -1046,7 +1060,7 @@ def main():
         # Remove noise shower file
         os.system("rm tmp.pt")
 
-        # Instantiate sampler
+        # Create instance of sampler
         sample = []
         sampler = pc_sampler(snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False)
 
@@ -1079,6 +1093,7 @@ def main():
         torch.save([sample_,in_energies], os.path.join(output_directory, 'sample.pt'))
 
         # Create plots of distributions evolving with diffusion steps
+        print(f'Drawing diffusion plots for average hit X & Y positions')
         distributions = [
         ( ('X', 'Y'), 
         (geant_x_pos,
@@ -1096,6 +1111,7 @@ def main():
         ]
         util.display.make_diffusion_plot(distributions, output_directory)
 
+        print(f'Drawing diffusion plots for average hit X positions and energies')
         distributions = [
         ( ('X', 'Total deposited energy [GeV]'), 
         (geant_x_pos,
@@ -1112,7 +1128,7 @@ def main():
         sampler.deposited_energy_t99) )
         ]
         util.display.make_diffusion_plot(distributions, output_directory)
-
+        print(f'Drawing diffusion plots for average hit energies and incident energy')
         distributions = [
         ( ('Total deposited energy', 'Incident particle energy [GeV]'), 
         (geant_deposited_energy,
@@ -1130,16 +1146,56 @@ def main():
         ]
         util.display.make_diffusion_plot(distributions, output_directory)
 
+        print('Plot hit energies')
+        fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1,5, figsize=(27,9))
+        bins=np.histogram(np.hstack((geant_deposited_energy,sampler.deposited_energy_t1)), bins=50)[1]
+        ax1.set_title('t=1')
+        ax1.set_ylabel('# entries')
+        ax1.set_xlabel('Hit energy [GeV]')
+        ax1.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
+        ax1.hist(sampler.deposited_energy_t1, bins, alpha=0.5, color='blue', label='Gen')
+        ax1.set_yscale('log')
+        ax1.legend(loc='upper right')
+        
+        ax2.set_title('t=25')
+        ax2.set_ylabel('# entries')
+        ax2.set_xlabel('Hit energy [GeV]')
+        ax2.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
+        ax2.hist(sampler.deposited_energy_t25, bins, alpha=0.5, color='blue', label='Gen')
+        ax2.set_yscale('log')
+        ax2.legend(loc='upper right')
+
+        ax3.set_title('t=50')
+        ax3.set_ylabel('# entries')
+        ax3.set_xlabel('Hit energy [GeV]')
+        ax3.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
+        ax3.hist(sampler.deposited_energy_t50, bins, alpha=0.5, color='blue', label='Gen')
+        ax3.set_yscale('log')
+        ax3.legend(loc='upper right')
+
+        ax4.set_title('t=75')
+        ax4.set_ylabel('# entries')
+        ax4.set_xlabel('Hit energy [GeV]')
+        ax4.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
+        ax4.hist(sampler.deposited_energy_t75, bins, alpha=0.5, color='blue', label='Gen')
+        ax4.set_yscale('log')
+        ax4.legend(loc='upper right')
+
+        ax5.set_title('t=99')
+        ax5.set_ylabel('# entries')
+        ax5.set_xlabel('Hit energy [GeV]')
+        ax5.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
+        ax5.hist(sampler.deposited_energy_t99, bins, alpha=0.5, color='blue', label='Gen')
+        ax5.set_yscale('log')
+        ax5.legend(loc='upper right')
+
+        fig.savefig(os.path.join(output_directory,'deposited_energy_diffusion.png'))
+
     #### Evaluation plots ####
     if switches_>>3 & trigger:
-        #output_directory = workingdir+'/evaluation_'+str(sampler_steps)+'samplersteps_'+datetime.now().strftime('%Y%m%d_%H%M')+'/'
-        #print(f'Evaluation outputs stored here: {output_directory}')
-        #if not os.path.exists(output_directory):
-        #    os.makedirs(output_directory)
-
         # Distributions object for generated files
         print(f'Generated inputs')
-        output_directory = 'sampling_100samplersteps_20230728_1523_output'
+        output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230804_0947_output')
         print(f'Evaluation outputs stored here: {output_directory}')
         plot_file_name = os.path.join(output_directory, 'sample.pt')
         custom_data = utils.cloud_dataset(plot_file_name,device=device)
