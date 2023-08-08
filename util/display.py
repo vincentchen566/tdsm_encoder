@@ -24,15 +24,12 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
     '''
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
     shower_counter = 0
-    
     shower_hit_energies = []
     shower_hit_x = []
     shower_hit_y = []
     all_z = []
     shower_hit_ine = []
-
     total_deposited_e_shower = []
     average_x_shower = []
     average_y_shower = []
@@ -40,7 +37,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
     all_incident_e = []
     entries = []
     GeV = 1/1000
-    
+    print(f'# showers to plot: {nshowers_2_plot}')
     if type(files_) == list:
         print(f'plot_distribution running on input type \'files\'')
         if energy_trans_file != '':
@@ -66,11 +63,14 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
         
         # Using several files so want to take even # samples from each file for plots
         n_files = len(files_)
-        print(f'n_files {type(n_files)}: {n_files}')
-        print(f'# showers {type(nshowers_2_plot)} to plot: {nshowers_2_plot}')
-        nshowers_2_plot = nshowers_2_plot/n_files
+        print(f'# files: {n_files}')
+        nshowers_per_file = [nshowers_2_plot//n_files for x in range(n_files)]
+        r_ = nshowers_2_plot % nshowers_per_file[0]
+        nshowers_per_file[-1] = nshowers_per_file[-1]+r_
+        print(f'# showers per file: {nshowers_per_file}')
         
-        for filename in files_:
+        for file_idx in range(len(files_)):
+            filename = files_[file_idx]
             shower_counter=0
             print(f'File: {filename}')
             fdir = filename.rsplit('/',1)[0]
@@ -86,7 +86,6 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 incident_energies = incident_energies.cpu().numpy().copy()
                 # Mask for padded values
                 mask = ~(data_np[:,:,3] == padding_value)
-                print(f'display.py mask: {mask}')
                 
                 incident_energies = np.array(incident_energies).reshape(-1,1)
                 if ine_trans_file != '':
@@ -96,8 +95,8 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 
                 # For each shower in batch
                 for j in range(len(data_np)):
-                    if shower_counter >= nshowers_2_plot:
-                        continue
+                    if shower_counter >= nshowers_per_file[file_idx]:
+                        break
                     shower_counter+=1
                     
                     # Only use non-padded values
@@ -146,8 +145,8 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             # Load saved pre-processor
             print(f'Loading file for transformation inversion: {energy_trans_file}')
             scalar_e = load(open(energy_trans_file, 'rb'))
-            
-        for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0): 
+        print(f'number of batches: {len(point_clouds_loader)}')
+        for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
             valid_hits = []
             data_np = shower_data.cpu().numpy().copy()
             energy_np = incident_energies.cpu().numpy().copy()
@@ -156,7 +155,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             # For each shower in batch
             for j in range(len(data_np)):
                 if shower_counter >= nshowers_2_plot:
-                    continue
+                    break
                 shower_counter+=1
                 valid_hits = data_np[j][mask[j]]
                 
@@ -284,7 +283,7 @@ def plot_xy(axes, X1, X2, y, ax_colorbar, hist_nbins=50, zlabel="", x0_label="",
 
 def make_plot(distributions, outdir=''):
     
-    fig = plt.figure(figsize=(12, 8))
+    fig = plt.figure(figsize=(12, 10))
     
     X1, X2, y_X, T1, T2, y_T = distributions[0][1]
     xlabel, ylabel, zlabel = distributions[0][0]
@@ -357,7 +356,6 @@ def create_axes_diffusion(n_plots):
     
     # define the axis for the next plots
     for idx in range(0,n_plots-1):
-        print(idx)
         #left = left + width + 0.22
         left = left + width + width_h + width_buffer
         left_h = left + width + 0.01
@@ -383,8 +381,8 @@ def plot_diffusion_xy(axes, X1, X2, GX1, GX2, hist_nbins=50, x0_label="", x1_lab
     ax.set_title(name)
     ax.set_xlabel(x0_label)
     ax.set_ylabel(x1_label)
-    ax.scatter(GX1, GX2, alpha=0.3, marker="o", s=5, lw=0, c='orange',label='Geant4')
-    ax.scatter(X1, X2, alpha=0.3, marker="o", s=5, lw=0, c='blue',label='Gen')
+    ax.scatter(GX1, GX2, alpha=0.5, marker="o", s=8, lw=0, c='orange',label='Geant4')
+    ax.scatter(X1, X2, alpha=0.5, marker="o", s=8, lw=0, c='blue',label='Gen')
     ax.set_xlim(xlim[0],xlim[1])
     ax.set_ylim(ylim[0],ylim[1])
     ax.legend(loc='upper left')
@@ -426,8 +424,8 @@ def make_diffusion_plot(distributions, outdir=''):
     ax_X, ax_T1, ax_T2, ax_T3, ax_T4 = create_axes_diffusion(int(n_plots))
     axarr = (ax_X, ax_T1, ax_T2, ax_T3, ax_T4)
     
-    x_lim = ( min(min(gen_x_t1),min(geant_x)) , max(max(gen_x_t1),max(geant_x)) )
-    y_lim = ( min(min(gen_y_t1),min(geant_y)) , max(max(gen_y_t1),max(geant_y)) )
+    x_lim = ( min(min(gen_x_t1),min(gen_x_t99),min(geant_x)) , max(max(gen_x_t1),max(gen_x_t99),max(geant_x)) )
+    y_lim = ( min(min(gen_y_t1),min(gen_y_t99),min(geant_y)) , max(max(gen_y_t1),max(gen_y_t99),max(geant_y)) )
     
     plot_diffusion_xy(
         axarr[0],
