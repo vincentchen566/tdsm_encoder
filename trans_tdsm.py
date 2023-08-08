@@ -223,10 +223,10 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     output_mask = output_mask.unsqueeze(-1)
     output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
     
-    # Tensor of randomised conditional variable 'time' steps
+    # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
-    # Noise input
-    # Multiply by mask so we don't go perturbing zero padded values to have some non-sentinel value
+    
+    # Noise input multiplied by mask so we don't go perturbing zero padded values to have some non-sentinel value
     z = torch.randn_like(x)*output_mask
     z = z.to(device)
     # Sample from standard deviation of noise
