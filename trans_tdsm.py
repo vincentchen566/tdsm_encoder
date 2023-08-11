@@ -96,7 +96,7 @@ class EncoderBlock(nn.Module):
         self.ffnn = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
             nn.Dropout(dropout),
-            nn.ReLU(inplace=True),
+            nn.GELU(),
             nn.Linear(hidden_dim, embed_dim)
         )
         self.norm1 = nn.LayerNorm(embed_dim)
@@ -180,18 +180,17 @@ class Gen(nn.Module):
         x = self.embed(x)
         # Embed 'time' condition
         embed_t_ = self.act_sig( self.embed_t(t) )
-        # Match dimensions and append to input
-        x += self.dense1(embed_t_).clone()
         # Embed incident particle energy
         embed_e_ = self.embed_t(e)
         embed_e_ = self.act_sig(embed_e_)
-        # Match dimensions and append to input
-        x += self.dense1(embed_e_).clone()
         # 'class' token (mean field)
         #x_cls = self.cls_token.expand(x.size(0), 1, -1)
 
         # Feed input embeddings into encoder block
         for layer in self.encoder:
+            # Match dimensions and append to input
+            x += self.dense1(embed_t_).clone()
+            x += self.dense1(embed_e_).clone()
             # Each encoder block takes previous blocks output as input
             #x = layer(x, x_cls, mask) # Block layers 
             x = layer(x, mask) # EncoderBlock layers
@@ -201,7 +200,7 @@ class Gen(nn.Module):
         output = self.out(x) / std_[:, None, None]
         return output
 
-def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='cpu'):
+def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-3, device='cpu'):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
     Denoising score matching
@@ -225,6 +224,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     
     # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
+    #print(f'random_t: {random_t}')
     
     # Noise input multiplied by mask so we don't go perturbing zero padded values to have some non-sentinel value
     z = torch.randn_like(x)*output_mask
@@ -232,7 +232,8 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     # Sample from standard deviation of noise
     mean_, std_ = marginal_prob_std(x,random_t)
     # Add noise to input
-    perturbed_x = x + z * std_[:, None, None]
+    #perturbed_x = x + z * std_[:, None, None]
+    perturbed_x = mean_ + std_[:, None, None] * z
 
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
     scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
@@ -244,7 +245,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     loss = loss*output_mask
     
     # Sum loss across all hits and 4-vectors (normalise by number of hits)
-    sum_loss = torch.sum( loss, dim=(1,2))
+    sum_loss = torch.mean( loss, dim=(1,2))
 
     # Average across batch
     batch_loss = torch.mean( sum_loss )
@@ -252,7 +253,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-5, device='c
     return batch_loss
 
 class pc_sampler:
-    def __init__(self, snr=0.16, sampler_steps=100, device='cuda', eps=1e-3, jupyternotebook=False):
+    def __init__(self, sde, snr=0.16, sampler_steps=100, device='cuda', eps=1e-3, jupyternotebook=False):
         ''' Generate samples from score based models with Predictor-Corrector method
             Args:
             score_model: A PyTorch model that represents the time-dependent score-based model.
@@ -268,6 +269,7 @@ class pc_sampler:
             Returns:
                 samples
         '''
+        self.sde = sde
         self.snr = snr
         self.sampler_steps = sampler_steps
         self.device = device
@@ -302,10 +304,10 @@ class pc_sampler:
         
         t = torch.ones(batch_size, device=self.device)
         
-        # Mean is the only thing related to input hits, std only related to conditional
+        # Mean and std
         mean_,std_ = marginal_prob_std(init_x,t)
         std_.to(self.device)
-
+        
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]==-20).type(torch.bool)
         
@@ -313,32 +315,38 @@ class pc_sampler:
         output_mask = (init_x[:,:,0]!=-20).type(torch.int)
         output_mask = output_mask.unsqueeze(-1)
         output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
-
-        init_x = init_x * std_[:,None,None]
+        
+        # Establish time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
         step_size = time_steps[0]-time_steps[1]
-
         if self.jupyternotebook:
             time_steps = tqdm.notebook.tqdm(time_steps)
+        t = torch.ones(batch_size, device=self.device)
+        
+        #init_x = init_x * std_[:,None,None]
+        #init_x = self.sde.prior_sampling(init_x.shape).to(self.device)
+        #init_x = mean_ * std_[:,None,None]
         
         # Input shower is just some noise * std from SDE
         x = init_x
         diffusion_step_ = 0
         with torch.no_grad():
-             # Load saved pre-processor
-             # print(f'Loading file for hit e transformation inversion: {energy_trans_file}')
-             if ine_trans_file != '':
-                 scalar_ine = load(open(ine_trans_file, 'rb'))
-             if energy_trans_file != '':
-                 scalar_e = load(open(energy_trans_file, 'rb'))
-             if x_trans_file != '':
-                 scalar_x = load(open(x_trans_file, 'rb'))
-             if y_trans_file != '':
-                 scalar_y = load(open(y_trans_file, 'rb'))
-             for time_step in time_steps:
+            # Load saved pre-processor
+            # print(f'Loading file for hit e transformation inversion: {energy_trans_file}')
+            if ine_trans_file != '':
+                scalar_ine = load(open(ine_trans_file, 'rb'))
+            if energy_trans_file != '':
+                scalar_e = load(open(energy_trans_file, 'rb'))
+            if x_trans_file != '':
+                scalar_x = load(open(x_trans_file, 'rb'))
+            if y_trans_file != '':
+                scalar_y = load(open(y_trans_file, 'rb'))
+            for time_step in time_steps:
                 diffusion_step_+=1
                 if not self.jupyternotebook:
                     print(f"Sampler step: {time_step:.4f}") 
+                
+                #print(f"Sampler step: {time_step:.4f}") 
                 batch_time_step = torch.ones(batch_size, device=x.device) * time_step
 
                 # matrix multiplication in GaussianFourier projection doesnt like float64
@@ -346,31 +354,41 @@ class pc_sampler:
                 alpha = torch.ones_like(torch.tensor(time_step))
 
                 # Corrector step (Langevin MCMC)
-                # First calculate Langevin step size using the predicted scores
-                grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
-
-                # Noise to add to input
-                noise = torch.randn_like(x)
                 
+                # Conditional score prediction gives estimate of noise to remove
+                grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
+                # Noise to add to input
+                r1, r2 = -2,2
+                noise = (r1 - r2) * torch.rand_like(x) + r2
+                #noise = torch.randn_like(x)
                 # Multiply by mask so we don't add noise to padded values / use gradients for padding in loss
                 noise = noise * output_mask
                 grad = grad * output_mask
 
-                # Langevin step size calculation: snr * ratio of gradients in noise / prediction used to calculate
+                # Langevin corrector
+                # step size calculation: snr * ratio of gradients in noise / prediction used to calculate
                 flattened_scores = grad.reshape(grad.shape[0], -1)
                 grad_norm = torch.linalg.norm( flattened_scores, dim=-1 ).mean()
                 flattened_noise = noise.reshape(noise.shape[0],-1)
                 noise_norm = torch.linalg.norm( flattened_noise, dim=-1 ).mean()
                 langevin_step_size =  (self.snr * noise_norm / grad_norm)**2 * 2 * alpha
-
                 # Adjust inputs according to scores using Langevin iteration rule
                 x_mean = x + langevin_step_size * grad
                 x = x_mean + torch.sqrt(2 * langevin_step_size) * noise
                 
-                # Adjust inputs according to scores using Euler-Maruyama predictor iteration rule
-                drift, diff = diffusion_coeff(x,batch_time_step)
+                # Euler-Maruyama Predictor
+                # Adjust inputs according to scores
+                #z = torch.rand_like(x)
+                #dt = -1./len(time_steps)
+                # drift, diffusion = self.rsde.sde(x, t)
+                drift, diff = diffusion_coeff(x,batch_time_step) #should be for the rsde?
+                #drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
+                #x_mean = x + drift*dt
+                #x = x_mean + diff[:, None, None] * np.sqrt(-dt) * z
+                
                 x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask) * step_size
-                x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * torch.randn_like(x)
+                #x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * torch.randn_like(x)
+                x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * noise
 
                 # Store distributions at different stages of diffusion
                 if diffusion_step_== 1:
@@ -403,7 +421,7 @@ class pc_sampler:
                         all_y = all_y.flatten().tolist()
                         av_y_position = np.mean( all_y )
                         self.av_y_pos_t1.append( av_y_position )
-                if diffusion_step_== 25:
+                if diffusion_step_== 10:
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
@@ -432,7 +450,7 @@ class pc_sampler:
                         all_y = all_y.flatten().tolist()
                         av_y_position = np.mean( all_y )
                         self.av_y_pos_t25.append( av_y_position )
-                if diffusion_step_== 50:
+                if diffusion_step_== 40:
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
@@ -461,7 +479,7 @@ class pc_sampler:
                         all_y = all_y.flatten().tolist()
                         av_y_position = np.mean( all_y )
                         self.av_y_pos_t50.append( av_y_position )
-                if diffusion_step_== 75:
+                if diffusion_step_== 60:
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
@@ -490,7 +508,7 @@ class pc_sampler:
                         all_y = all_y.flatten().tolist()
                         av_y_position = np.mean( all_y )
                         self.av_y_pos_t75.append( av_y_position )
-                if diffusion_step_== 99:
+                if diffusion_step_== 100:
                     for shower_idx in range(0,len(x_mean)):
                         masked_output = x_mean*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
@@ -522,7 +540,8 @@ class pc_sampler:
 
         # Do not include noise in last step
         # Need to remove padded hits?
-        x_mean = x_mean
+        #print('returned x_mean = ', x_mean*output_mask)
+        x_mean = x_mean*output_mask
         return x_mean
 
 def check_mem():
@@ -560,10 +579,14 @@ def generate_hits(prob, xbin, ybin, x_vals, max_hits, n_features, device='cpu'):
     y_pred = []
     pred_nhits = []
     prob_ = prob[ind,:]
+    # range for random values of features
+    r1,r2 = -10, 10
     for i in range(len(prob_)):
         nhits = int(random_sampler(prob_[i],ybin + 1))
         pred_nhits.append(nhits)
-        y_pred.append(torch.randn(nhits, n_features, device=device))
+        #torch.randn(nhits, n_features)
+        #y_pred.append(torch.randn(nhits, n_features, device=device))
+        y_pred.append(( (r1 - r2) * torch.rand(nhits, n_features, device=device) + r2 ) )
     
     return pred_nhits, y_pred
 

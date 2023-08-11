@@ -113,7 +113,7 @@ class unscale_energies:
             return self.features
 
 class VESDE:
-  def __init__(self, sigma_min=0.01, sigma_max=50, N=1000, device='cuda'):
+  def __init__(self, sigma_min=0.01, sigma_max=50, N=2000, device='cuda'):
     """Construct a Variance Exploding SDE.
     Args:
       sigma_min: smallest sigma.
@@ -144,7 +144,7 @@ class VESDE:
     return -N / 2. * np.log(2 * np.pi * self.sigma_max ** 2) - torch.sum(z ** 2, dim=(1, 2, 3)) / (2 * self.sigma_max ** 2)
   
 class VPSDE:
-  def __init__(self, beta_min=0.01, beta_max=20, N=1000, device='cuda'):
+  def __init__(self, beta_min=0.1, beta_max=20, N=2000, device='cuda'):
     """Construct a Variance Preserving SDE.
     Args:
       beta_min: smallest beta.
@@ -162,13 +162,14 @@ class VPSDE:
 
   def sde(self, x, t):
     beta_t = self.beta_0 + t * (self.beta_1 - self.beta_0)
-    drift = -0.5 * beta_t[:, None, None, None] * x
+    drift = -0.5 * beta_t[:, None, None] * x
     diffusion = torch.sqrt(beta_t)
     return drift, diffusion
 
   def marginal_prob(self, x, t):
     log_mean_coeff = -0.25 * t ** 2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
-    mean = torch.exp(log_mean_coeff[:, None, None, None]) * x
+    # For t~0, the following multiplies x by a number initially ~ 1, which gets smaller as time progresses to t~1
+    mean = torch.exp(log_mean_coeff[:, None, None]) * x
     std = torch.sqrt(1. - torch.exp(2. * log_mean_coeff))
     return mean, std
 

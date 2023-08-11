@@ -192,6 +192,45 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
 
     return [entries, all_incident_e, total_deposited_e_shower, shower_hit_energies, shower_hit_x, shower_hit_y, all_z, shower_hit_ine, average_x_shower, average_y_shower, average_z_shower]
 
+def perturbation_1D(distributions, outdir='./'):
+    xlabel = distributions[0][0]
+    p0, p1, p2, p3, p4, p5 = distributions[0][1]
+    
+    fig, axs_1 = plt.subplots(1,5, figsize=(24,8), sharex=True, sharey=True)
+    bins=np.histogram(np.hstack((p0,p1)), bins=50)[1]
+    axs_1[0].set_xlabel(xlabel)
+    axs_1[0].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
+    axs_1[0].hist(p1, bins, alpha=0.5, color='red', label='perturbed')
+    axs_1[0].set_yscale('log')
+    axs_1[0].legend(loc='upper right')
+
+    axs_1[1].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
+    axs_1[1].hist(p2, bins, alpha=0.5, color='red', label='perturbed')
+    axs_1[1].set_yscale('log')
+    axs_1[1].legend(loc='upper right')
+
+    axs_1[2].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
+    axs_1[2].hist(p3, bins, alpha=0.5, color='red', label='perturbed')
+    axs_1[2].set_yscale('log')
+    axs_1[2].legend(loc='upper right')
+
+    axs_1[3].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
+    axs_1[3].hist(p4, bins, alpha=0.5, color='red', label='perturbed')
+    axs_1[3].set_yscale('log')
+    axs_1[3].legend(loc='upper right')
+    
+    axs_1[4].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
+    axs_1[4].hist(p5, bins, alpha=0.5, color='red', label='perturbed')
+    axs_1[4].set_yscale('log')
+    axs_1[4].legend(loc='upper right')
+    
+    fig.show()
+    save_name = xlabel+'_perurbation_1D.png'
+    save_name = save_name.replace(' ','').replace('[','').replace(']','')
+    print(f'save_name: {save_name}')
+    fig.savefig(os.path.join(outdir,save_name))
+    return
+
 def create_axes():
 
     # define the axis for the first plot
@@ -436,7 +475,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=100,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=1',
+        name='t=1 (noisy)',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -450,7 +489,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=100,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=25',
+        name='t=0.75',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -464,7 +503,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=100,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=50',
+        name='t=0.50',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -478,7 +517,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=100,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=75',
+        name='t=0.25',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -492,7 +531,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=100,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=99',
+        name='t=0.0 (after 100 steps)',
         xlim=x_lim,
         ylim=y_lim
     )
