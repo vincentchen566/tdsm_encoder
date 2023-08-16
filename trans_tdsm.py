@@ -630,7 +630,7 @@ def main():
     train_ratio = 0.8
     batch_size = 128
     lr = 0.00001
-    n_epochs = 500
+    n_epochs = 300
     ### SDE PARAMETERS ###
     SDE = 'VE'
     sigma_max = 50.
@@ -647,6 +647,7 @@ def main():
 
     model_params = f'''
     ### PARAMS ###
+    inputs = {indir}
     ### SDE PARAMETERS ###
     SDE = {SDE}
     sigma/beta max. = {sigma_max}
@@ -801,7 +802,7 @@ def main():
 
     #### Training ####
     if switches_>>1 & trigger:
-        output_directory = workingdir+'/training_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
+        output_directory = workingdir+'/training_'+SDE+'_'+str(n_epochs)+'_trans_'+indir+'_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
         print('Output directory: ', output_directory)
         if not os.path.exists(output_directory):
             print(f'Making new directory: {output_directory}')
@@ -936,7 +937,7 @@ def main():
         
         # Load saved model
         model=Gen(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
-        load_name = os.path.join(workingdir,'training_20230802_1816_output/ckpt_tmp_50.pth')
+        load_name = os.path.join(workingdir,'training_VP_300_trans_power_transformer_20230814_1803_output/ckpt_tmp_299.pth')
         model.load_state_dict(torch.load(load_name, map_location=device))
         model.to(device)
 
@@ -947,8 +948,7 @@ def main():
         geant_x_pos = []
         geant_y_pos = []
         geant_ine = []
-        N_geant_showers_per_file = 0
-        N_geant_showers_total = 0
+        N_geant_showers = 0
         max_hits = -1
 
         # For diffusion plots in 'physical' feature space, add files here
@@ -967,74 +967,68 @@ def main():
             scalar_x = load(open(x_trans_file, 'rb'))
         if y_trans_file != '':
             scalar_y = load(open(y_trans_file, 'rb'))
-        
-        if len(files_list_) > n_showers_2_gen:
-            print('WARNING: you are generating less showers than you have # files')
-            print('Will take one shower per file until n_showers_2_gen is reached')
-            n_showers_per_file = 1
-        else:
-            n_showers_per_file = n_showers_2_gen/len(files_list_)
 
-        for file in files_list_:
+        n_files = len(files_list_)
+        nshowers_per_file = [n_showers_2_gen//n_files for x in range(n_files)]
+        r_ = n_showers_2_gen % nshowers_per_file[0]
+        nshowers_per_file[-1] = nshowers_per_file[-1]+r_
+        print(f'# showers per file: {nshowers_per_file}')
+        shower_counter = 0
+
+        # Collect Geant4 shower information
+        for file_idx in range(len(files_list_)):
+            file = files_list_[file_idx]
+            shower_counter = 0
             # Load shower data
             custom_data = utils.cloud_dataset(file, device=device)
             point_clouds_loader = DataLoader(custom_data, batch_size=batch_size, shuffle=True)
             # Loop over batches
-            N_geant_showers_per_file = 0
             for i, (shower_data, incident_energies) in enumerate(point_clouds_loader,0):
                 # Copy data
-                valid_event = []
                 data_np = shower_data.cpu().numpy().copy()
                 energy_np = incident_energies.cpu().numpy().copy()
                 # Mask for padded values (padded values set to 0)
                 masking = data_np[:,:,0] != -20
-                print(f'trans_tdsm.py masking: {masking}')
-                
                 # Loop over each shower in batch
                 for j in range(len(data_np)):
                     # Mask padded hits and count valid hits for shower j in batch
                     valid_hits = data_np[j][masking[j]]
+                    n_valid_hits_per_shower.append(len(valid_hits))
                     if len(valid_hits)>max_hits:
                         max_hits = len(valid_hits)
-                    
+                    incident_e_per_shower.append(energy_np[j])
+
                     # ONLY for plotting purposes
-                    # Skip if already generated enough total showers
-                    if N_geant_showers_total >= n_showers_2_gen:
+                    if shower_counter >= nshowers_per_file[file_idx]:
                         break
-                    # If we still want more showers to reach total desired
                     else:
-                        # If we still want more showers from this file
-                        if N_geant_showers_per_file < n_showers_per_file:
-                            incident_e_per_shower.append(energy_np[j])
-                            n_valid_hits_per_shower.append(len(valid_hits))
-                            N_geant_showers_total+=1
-                            N_geant_showers_per_file+=1
-                            all_ine = np.array(energy_np[j]).reshape(-1,1)
-                            # Rescale the conditional input for each shower
-                            if ine_trans_file != '':
-                                all_ine = scalar_ine.inverse_transform(all_ine)
-                            all_ine = all_ine.flatten().tolist()
-                            geant_ine.append(all_ine)
-                            
-                            all_e = valid_hits[:,0].reshape(-1,1)
-                            if energy_trans_file != '':
-                                all_e = scalar_e.inverse_transform(all_e)
-                            all_e = all_e.flatten().tolist()
-                            geant_deposited_energy.append( sum( all_e ) )
-                            
-                            all_x = valid_hits[:,1].reshape(-1,1)
-                            if x_trans_file != '':
-                                all_x = scalar_x.inverse_transform(all_x)
-                            all_x = all_x.flatten().tolist()
-                            geant_x_pos.append( np.mean(all_x) )
-                            
-                            all_y = valid_hits[:,2].reshape(-1,1)
-                            if y_trans_file != '':
-                                all_y = scalar_y.inverse_transform(all_y)
-                            all_y = all_y.flatten().tolist()
-                            geant_y_pos.append( np.mean(all_y) )
-                        else:
-                            break
+                        shower_counter+=1
+                        all_ine = np.array(energy_np[j]).reshape(-1,1)
+                        # Rescale the conditional input for each shower
+                        if ine_trans_file != '':
+                            all_ine = scalar_ine.inverse_transform(all_ine)
+                        all_ine = all_ine.flatten().tolist()
+                        geant_ine.append(all_ine)
+                        
+                        all_e = valid_hits[:,0].reshape(-1,1)
+                        if energy_trans_file != '':
+                            all_e = scalar_e.inverse_transform(all_e)
+                        all_e = all_e.flatten().tolist()
+                        geant_deposited_energy.append( sum( all_e ) )
+                        
+                        all_x = valid_hits[:,1].reshape(-1,1)
+                        if x_trans_file != '':
+                            all_x = scalar_x.inverse_transform(all_x)
+                        all_x = all_x.flatten().tolist()
+                        geant_x_pos.append( np.mean(all_x) )
+                        
+                        all_y = valid_hits[:,2].reshape(-1,1)
+                        if y_trans_file != '':
+                            all_y = scalar_y.inverse_transform(all_y)
+                        all_y = all_y.flatten().tolist()
+                        geant_y_pos.append( np.mean(all_y) )
+
+                    N_geant_showers+=1
             del custom_data
 
         # Arrays of Nvalid hits in showers, incident energies per shower
@@ -1075,8 +1069,10 @@ def main():
 
         # Load the showers of noise
         gen_hits = utils.cloud_dataset('tmp.pt', device=device)
-        # Pad showers with values of -20
+
+        # Pad showers
         gen_hits.padding(-20)
+
         # Load len(gen_hits_loader) number of batches each with batch_size number of showers
         gen_hits_loader = DataLoader(gen_hits, batch_size=batch_size, shuffle=False)
 
@@ -1085,7 +1081,7 @@ def main():
 
         # Create instance of sampler
         sample = []
-        sampler = pc_sampler(snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False)
+        sampler = pc_sampler(sde=sde, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False)
 
         # Loop over each batch of noise showers
         print(f'# batches: {len(gen_hits_loader)}' )
@@ -1268,7 +1264,7 @@ def main():
         ax[0][1].set_xlabel('Hit energy [GeV]')
         ax[0][1].hist(all_e, bins, alpha=0.5, color='orange', label='Geant4')
         ax[0][1].hist(all_e_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[0][1].set_yscale('log')
+        #ax[0][1].set_yscale('log')
         ax[0][1].legend(loc='upper right')
 
         print('Plot hit x')
@@ -1277,7 +1273,7 @@ def main():
         ax[0][2].set_xlabel('Hit x position')
         ax[0][2].hist(all_x, bins, alpha=0.5, color='orange', label='Geant4')
         ax[0][2].hist(all_x_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[0][2].set_yscale('log')
+        #ax[0][2].set_yscale('log')
         ax[0][2].legend(loc='upper right')
 
         print('Plot hit y')
@@ -1286,7 +1282,7 @@ def main():
         ax[1][0].set_xlabel('Hit y position')
         ax[1][0].hist(all_y, bins, alpha=0.5, color='orange', label='Geant4')
         ax[1][0].hist(all_y_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[1][0].set_yscale('log')
+        #ax[1][0].set_yscale('log')
         ax[1][0].legend(loc='upper right')
 
         print('Plot hit z')
@@ -1295,7 +1291,7 @@ def main():
         ax[1][1].set_xlabel('Hit z position')
         ax[1][1].hist(all_z, bins, alpha=0.5, color='orange', label='Geant4')
         ax[1][1].hist(all_z_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[1][1].set_yscale('log')
+        #ax[1][1].set_yscale('log')
         ax[1][1].legend(loc='upper right')
 
         print('Plot incident energies')
@@ -1304,7 +1300,7 @@ def main():
         ax[1][2].set_xlabel('Incident energies [GeV]')
         ax[1][2].hist(all_incident_e, bins, alpha=0.5, color='orange', label='Geant4')
         ax[1][2].hist(all_incident_e_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[1][2].set_yscale('log')
+        #ax[1][2].set_yscale('log')
         ax[1][2].legend(loc='upper right')
 
         print('Plot total deposited hit energy')
@@ -1313,7 +1309,7 @@ def main():
         ax[2][0].set_xlabel('Deposited energy [GeV]')
         ax[2][0].hist(total_deposited_e_shower, bins, alpha=0.5, color='orange', label='Geant4')
         ax[2][0].hist(total_deposited_e_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[2][0].set_yscale('log')
+        #ax[2][0].set_yscale('log')
         ax[2][0].legend(loc='upper right')
 
         print('Plot average hit X position')
@@ -1322,7 +1318,7 @@ def main():
         ax[2][1].set_xlabel('Average X pos.')
         ax[2][1].hist(average_x_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
         ax[2][1].hist(average_x_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[2][1].set_yscale('log')
+        #ax[2][1].set_yscale('log')
         ax[2][1].legend(loc='upper right')
 
         print('Plot average hit Y position')
@@ -1331,7 +1327,7 @@ def main():
         ax[2][2].set_xlabel('Average Y pos.')
         ax[2][2].hist(average_y_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
         ax[2][2].hist(average_y_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[2][2].set_yscale('log')
+        #ax[2][2].set_yscale('log')
         ax[2][2].legend(loc='upper right')
 
         fig_name = os.path.join(output_directory, 'Geant_Gen_comparison.png')
