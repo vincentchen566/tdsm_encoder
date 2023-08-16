@@ -224,16 +224,17 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-3, device='c
     
     # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
-    #print(f'random_t: {random_t}')
     
     # Noise input multiplied by mask so we don't go perturbing zero padded values to have some non-sentinel value
-    z = torch.randn_like(x)*output_mask
+    r1, r2 = -2,2
+    noise = (r1 - r2) * torch.rand_like(shower_data) + r2
+    z = noise*output_mask
     z = z.to(device)
     # Sample from standard deviation of noise
     mean_, std_ = marginal_prob_std(x,random_t)
     # Add noise to input
-    #perturbed_x = x + z * std_[:, None, None]
-    perturbed_x = mean_ + std_[:, None, None] * z
+    perturbed_x = x + z * std_[:, None, None]
+    #perturbed_x = mean_ + std_[:, None, None] * z
 
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
     scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
@@ -360,7 +361,7 @@ class pc_sampler:
                 # Noise to add to input
                 r1, r2 = -2,2
                 noise = (r1 - r2) * torch.rand_like(x) + r2
-                #noise = torch.randn_like(x)
+
                 # Multiply by mask so we don't add noise to padded values / use gradients for padding in loss
                 noise = noise * output_mask
                 grad = grad * output_mask
@@ -380,14 +381,12 @@ class pc_sampler:
                 # Adjust inputs according to scores
                 #z = torch.rand_like(x)
                 #dt = -1./len(time_steps)
-                # drift, diffusion = self.rsde.sde(x, t)
-                drift, diff = diffusion_coeff(x,batch_time_step) #should be for the rsde?
+                drift, diff = diffusion_coeff(x,batch_time_step)
                 #drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
                 #x_mean = x + drift*dt
                 #x = x_mean + diff[:, None, None] * np.sqrt(-dt) * z
                 
                 x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask) * step_size
-                #x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * torch.randn_like(x)
                 x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * noise
 
                 # Store distributions at different stages of diffusion
@@ -632,8 +631,9 @@ def main():
     lr = 0.00001
     n_epochs = 300
     ### SDE PARAMETERS ###
-    SDE = 'VE'
+    SDE = 'VP'
     sigma_max = 50.
+    sigma_min = 0.1
     ### MODEL PARAMETERS ###
     n_feat_dim = 4
     embed_dim = 512
