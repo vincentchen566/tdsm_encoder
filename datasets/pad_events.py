@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import RobustScaler, PowerTransformer, QuantileTransformer
+from sklearn.preprocessing import RobustScaler, PowerTransformer, QuantileTransformer, MinMaxScaler
 from pickle import dump
 sys.path.insert(1, '../')
 import utils, psutil
@@ -72,28 +72,32 @@ def main():
         #transform_e = QuantileTransformer(output_distribution='normal').fit(E_)
         #transform_e = QuantileTransformer(output_distribution='uniform').fit(E_)
         #transform_e = RobustScaler().fit(E_)
-        transform_e = PowerTransformer(method="box-cox").fit(E_)
+        transform_e = MinMaxScaler(feature_range=(1,2)).fit(E_)
+        #transform_e = PowerTransformer(method="yeo-johnson").fit(E_)
         print(f'Fitting transformation function for hit X')
         #transform_x = QuantileTransformer(output_distribution='normal').fit(X_)
         #transform_x = QuantileTransformer(output_distribution='uniform').fit(X_)
         #transform_x = RobustScaler().fit(X_)
-        transform_x = PowerTransformer(method="yeo-johnson").fit(X_)
+        transform_x = MinMaxScaler(feature_range=(1,2)).fit(X_)
+        #transform_x = PowerTransformer(method="yeo-johnson").fit(X_)
         print(f'Fitting transformation function for hit Y')
         #transform_y = QuantileTransformer(output_distribution='normal').fit(Y_)
         #transform_y = QuantileTransformer(output_distribution='uniform').fit(Y_)
         #transform_y = RobustScaler().fit(Y_)
-        transform_y = PowerTransformer(method="yeo-johnson").fit(Y_)
+        transform_y = MinMaxScaler(feature_range=(1,2)).fit(Y_)
+        #transform_y = PowerTransformer(method="yeo-johnson").fit(Y_)
     
     all_files_inenergy = torch.reshape(all_files_inenergy, (-1,1))
     print(f'Fitting transformation function for incident energies')
     #rescaler_y = QuantileTransformer(output_distribution='normal').fit(all_files_inenergy)
     #rescaler_y = QuantileTransformer(output_distribution='uniform').fit(all_files_inenergy)
     #rescaler_y = RobustScaler().fit(all_files_inenergy)
-    rescaler_y = PowerTransformer("box-cox").fit(all_files_inenergy)
+    rescaler_y = MinMaxScaler(feature_range=(1,2)).fit(all_files_inenergy)
+    #rescaler_y = PowerTransformer("yeo-johnson").fit(all_files_inenergy)
     
     # For each file
     for infile in os.listdir(indir):
-        if fnmatch.fnmatch(infile, 'dataset_1_photons_tensor_no_pedding_euclidian_nentry*.pt'):
+        if fnmatch.fnmatch(infile, 'dataset_1_photons_tensor_no_pedding_euclidian_nentry12*.pt'):
             filename = os.path.join(indir,infile)
             ofile = infile.replace("tensor_no_pedding_euclidian", "padded" )
             opath = '/eos/user/j/jthomasw/tdsm_encoder/datasets/'
@@ -154,7 +158,7 @@ def main():
                 shower_data_transformed = torch.stack((E_,X_,Y_,Z_), -1)
                 
                 # Homogenise data with padding to make all showers the same length
-                padded_shower = F.pad(input = shower_data_transformed, pad=(0,0,0,pad_hits), mode='constant', value=-20)
+                padded_shower = F.pad(input = shower_data_transformed, pad=(0,0,0,pad_hits), mode='constant', value=0.0)
                 padded_showers.append(padded_shower)
                 shower_count+=1
                 
@@ -173,8 +177,6 @@ def main():
             print(f'File {infile} contains:')
             print(f'{type(padded_showers)} of {len(padded_showers)} showers of type {type(padded_showers[0])}')
             print(f'{type(padded_incident_e)} of {len(padded_incident_e)} showers of type {type(padded_incident_e[0])}')
-
-            
             
             #### Input plots ####
             # Do you want to invert transformation for plotting purposes?
@@ -206,7 +208,7 @@ def main():
                 hit_ys = shower_data[0][:,2]
                 hit_zs = shower_data[0][:,3]
 
-                mask = hit_energies != -20.0
+                mask = hit_energies != 0.0
 
                 real_hit_energies = torch.masked_select(hit_energies,mask)
                 real_hit_xs = torch.masked_select(hit_xs,mask)
