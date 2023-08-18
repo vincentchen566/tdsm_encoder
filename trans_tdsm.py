@@ -200,7 +200,7 @@ class Gen(nn.Module):
         output = self.out(x) / std_[:, None, None]
         return output
 
-def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-3, device='cpu'):
+def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=1e-3, device='cpu'):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
     Denoising score matching
@@ -253,7 +253,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , eps=1e-3, device='c
     return batch_loss
 
 class pc_sampler:
-    def __init__(self, sde, snr=0.16, sampler_steps=100, device='cuda', eps=1e-3, jupyternotebook=False):
+    def __init__(self, sde, padding_value, snr=0.16, sampler_steps=100, device='cuda', eps=1e-3, jupyternotebook=False):
         ''' Generate samples from score based models with Predictor-Corrector method
             Args:
             score_model: A PyTorch model that represents the time-dependent score-based model.
@@ -271,6 +271,7 @@ class pc_sampler:
         '''
         self.sde = sde
         self.snr = snr
+        self.padding_value = padding_value
         self.sampler_steps = sampler_steps
         self.device = device
         self.eps = eps
@@ -306,9 +307,9 @@ class pc_sampler:
         t = torch.ones(batch_size, device=self.device)
         
         # Padding masks defined by initial # hits / zero padding
-        padding_mask = (init_x[:,:,0]== 0.0).type(torch.bool)
+        padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
         # Inverse mask to ignore models output for 0-padded hits in loss
-        output_mask = (init_x[:,:,0]!= 0.0).type(torch.int)
+        output_mask = (init_x[:,:,0]!= self.padding_value).type(torch.int)
         output_mask = output_mask.unsqueeze(-1)
         output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
         #print(f'output_mask : {output_mask}')
@@ -386,7 +387,7 @@ class pc_sampler:
                 # Store distributions at different stages of diffusion
                 if diffusion_step_== 0:
                     for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean*output_mask
+                        masked_output = x_mean#*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
                         if ine_trans_file != '':
                             all_ine = scalar_ine.inverse_transform(all_ine)
@@ -415,7 +416,7 @@ class pc_sampler:
                         self.av_y_pos_step1.append( av_y_position )
                 if diffusion_step_==80:
                     for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean*output_mask
+                        masked_output = x_mean#*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
                         if ine_trans_file != '':
                             all_ine = scalar_ine.inverse_transform(all_ine)
@@ -444,7 +445,7 @@ class pc_sampler:
                         self.av_y_pos_step25.append( av_y_position )
                 if diffusion_step_== 90:
                     for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean*output_mask
+                        masked_output = x_mean#*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
                         if ine_trans_file != '':
                             all_ine = scalar_ine.inverse_transform(all_ine)
@@ -473,7 +474,7 @@ class pc_sampler:
                         self.av_y_pos_step50.append( av_y_position )
                 if diffusion_step_== 95:
                     for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean*output_mask
+                        masked_output = x_mean#*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
                         if ine_trans_file != '':
                             all_ine = scalar_ine.inverse_transform(all_ine)
@@ -502,7 +503,7 @@ class pc_sampler:
                         self.av_y_pos_step75.append( av_y_position )
                 if diffusion_step_== 99:
                     for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean*output_mask
+                        masked_output = x_mean#*output_mask
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
                         if ine_trans_file != '':
                             all_ine = scalar_ine.inverse_transform(all_ine)
@@ -534,7 +535,7 @@ class pc_sampler:
         # Do not include noise in last step
         # Need to remove padded hits?
         #print('returned x_mean = ', x_mean*output_mask)
-        x_mean = x_mean*output_mask
+        x_mean = x_mean#*output_mask
         return x_mean
 
 def check_mem():
@@ -614,7 +615,8 @@ def main():
     
     # Useful when debugging gradient issues
     torch.autograd.set_detect_anomaly(True)
-
+    
+    padding_value = 0.0
     ### HYPERPARAMETERS ###
     train_ratio = 0.8
     batch_size = 128
@@ -867,7 +869,7 @@ def main():
                     # Zero any gradients from previous steps
                     optimiser.zero_grad()
                     # Loss average for each batch
-                    loss = loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, device=device)
+                    loss = loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device)
                     cumulative_epoch_loss+=float(loss)
                     # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
                     loss.backward()
@@ -881,7 +883,7 @@ def main():
                         model.eval()
                         shower_data = shower_data.to(device)
                         incident_energies = incident_energies.to(device)
-                        test_loss = loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, device=device)
+                        test_loss = loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device)
                         cumulative_test_epoch_loss+=float(test_loss)
 
             # Add the batch size just used to the total number of clouds
@@ -977,7 +979,7 @@ def main():
                 data_np = shower_data.cpu().numpy().copy()
                 energy_np = incident_energies.cpu().numpy().copy()
                 # Mask for padded values (padded values set to 0)
-                masking = data_np[:,:,0] != 0.0
+                masking = data_np[:,:,0] != padding_value
                 print(f'trans_tdsm.py masking: {masking}')
                 
                 # Loop over each shower in batch
@@ -1066,7 +1068,7 @@ def main():
         # Load the showers of noise
         gen_hits = utils.cloud_dataset('tmp.pt', device=device)
         # Pad showers with values of 0
-        gen_hits.padding(0.0)
+        gen_hits.padding(padding_value)
         # Load len(gen_hits_loader) number of batches each with batch_size number of showers
         gen_hits_loader = DataLoader(gen_hits, batch_size=batch_size, shuffle=False)
 
@@ -1075,7 +1077,7 @@ def main():
 
         # Create instance of sampler
         sample = []
-        sampler = pc_sampler(snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False)
+        sampler = pc_sampler(sde, padding_value=padding_value, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False)
 
         # Loop over each batch of noise showers
         print(f'# batches: {len(gen_hits_loader)}' )

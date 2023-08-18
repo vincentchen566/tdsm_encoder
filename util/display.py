@@ -84,10 +84,9 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 valid_hits = []
                 data_np = shower_data.cpu().numpy().copy()
                 incident_energies = incident_energies.cpu().numpy().copy()
+                
                 # Mask for padded values
                 mask = ~(data_np[:,:,0] == padding_value)
-                #print(f'data_np: {data_np}')
-                #print(f'mask: {mask}')
                 
                 incident_energies = np.array(incident_energies).reshape(-1,1)
                 if ine_trans_file != '':
@@ -103,7 +102,6 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     
                     # Only use non-padded values
                     valid_hits = data_np[j][mask[j]]
-                    #print(f'valid_hits: {len(valid_hits)}')
                     
                     # To transform back to original energies for plots
                     all_e = np.array(valid_hits[:,0]).reshape(-1,1)
