@@ -978,9 +978,9 @@ def main():
                 valid_event = []
                 data_np = shower_data.cpu().numpy().copy()
                 energy_np = incident_energies.cpu().numpy().copy()
+                
                 # Mask for padded values (padded values set to 0)
                 masking = data_np[:,:,0] != padding_value
-                print(f'trans_tdsm.py masking: {masking}')
                 
                 # Loop over each shower in batch
                 for j in range(len(data_np)):
