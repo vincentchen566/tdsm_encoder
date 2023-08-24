@@ -585,7 +585,7 @@ def main():
     argparser = argparse.ArgumentParser(usage)
     argparser.add_argument('-o','--output',dest='output_path', help='Path to output directory', default='', type=str)
     argparser.add_argument('-s','--switches',dest='switches', help='Binary representation of switches that run: evaluation plots, training, sampling, evaluation plots', default='0000', type=str)
-    argparser.add_argument('-i','--inputs',dest='inputs', help='Path to input directory', default='quantile_gauss_transformer', type=str)
+    argparser.add_argument('-i','--inputs',dest='inputs', help='Path to input directory', default='', type=str)
     args = argparser.parse_args()
     workingdir = args.output_path
     indir = args.inputs
@@ -620,12 +620,16 @@ def main():
     ### HYPERPARAMETERS ###
     train_ratio = 0.8
     batch_size = 128
-    lr = 0.00001
+    lr = 0.0001
     n_epochs = 500
     ### SDE PARAMETERS ###
     SDE = 'VP'
-    sigma_max = 50.
-    sigma_min = 0.1
+    if SDE == 'VP':
+        sigma_max = 50.0
+        sigma_min = 0.1
+    if SDE == 'VE':
+        sigma_max = 20.0
+        sigma_min = 0.1
     ### MODEL PARAMETERS ###
     n_feat_dim = 4
     embed_dim = 512
@@ -799,7 +803,9 @@ def main():
             print(f'Making new directory: {output_directory}')
             os.makedirs(output_directory)
         
+        # Instantiate model
         model=Gen(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
+
         table = PrettyTable(['Module name', 'Parameters listed'])
         t_params = 0
         for name_ , para_ in model.named_parameters():
@@ -858,6 +864,7 @@ def main():
                 
                 # Load shower batch for training
                 for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
+                    
                     # Move model to device and set dtype as same as data (note torch.double works on both CPU and GPU)
                     model.to(device, shower_data.dtype)
                     model.train()
@@ -866,13 +873,17 @@ def main():
                     if len(shower_data) < 1:
                         print('Very few hits in shower: ', len(shower_data))
                         continue
+
                     # Zero any gradients from previous steps
                     optimiser.zero_grad()
+
                     # Loss average for each batch
                     loss = loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device)
                     cumulative_epoch_loss+=float(loss)
+
                     # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
                     loss.backward()
+
                     # Update value of x += -lr * x.grad
                     optimiser.step()
                 
