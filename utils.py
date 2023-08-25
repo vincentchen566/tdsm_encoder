@@ -13,7 +13,6 @@ class cloud_dataset(Dataset):
     self.min_y = torch.min(self.condition)
     self.max_y = torch.max(self.condition)
     self.max_nhits = -1
-
     self.transform = transform
     self.transform_y = transform_y
     self.device = device

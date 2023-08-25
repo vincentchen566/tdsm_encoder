@@ -100,7 +100,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                         break
                     shower_counter+=1
                     
-                    # Only use non-padded values
+                    # Only use non-padded values for plots
                     valid_hits = data_np[j]#[mask[j]]
                     
                     # To transform back to original energies for plots
@@ -157,6 +157,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             for j in range(len(data_np)):
                 if shower_counter >= nshowers_2_plot:
                     break
+                    
                 shower_counter+=1
                 valid_hits = data_np[j]#[mask[j]]
                 

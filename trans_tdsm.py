@@ -305,14 +305,16 @@ class pc_sampler:
         
         # Time array
         t = torch.ones(batch_size, device=self.device)
-        
+
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
+
+        # !!!OBSOLETE!!!
         # Inverse mask to ignore models output for 0-padded hits in loss
         output_mask = (init_x[:,:,0]!= self.padding_value).type(torch.int)
         output_mask = output_mask.unsqueeze(-1)
         output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
-        #print(f'output_mask : {output_mask}')
+        # !!!!!!!!!!!!!!
         
         # Establish time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
@@ -358,11 +360,13 @@ class pc_sampler:
                 grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
                 # Multiply by mask so we don't add noise to padded values / use gradients for padding in loss
                 #grad = grad * output_mask
+                #print(f'grad ({len(grad[0])}): {grad[0]}')
                 
                 nc_steps = 1
                 for n_ in range(nc_steps):
                     # Langevin corrector
                     noise = torch.normal(0,1,size=x.shape, device=x.device)
+                    #print(f'noise ({len(noise[0])}): {noise[0]}')
                     #noise = noise * output_mask
                     # step size calculation: snr * ratio of gradients in noise / prediction used to calculate
                     flattened_scores = grad.reshape(grad.shape[0], -1)
@@ -380,7 +384,7 @@ class pc_sampler:
                 drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
                 x_mean = x - drift*step_size
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
-
+                #print(f'x_mean ({len(x_mean[0])}): {x_mean[0]}')
                 #x_mean = x + (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask) * step_size
                 #x = x_mean + torch.sqrt(diff**2 * step_size)[:, None, None] * noise
 
@@ -567,17 +571,28 @@ def get_prob_dist(x,y,nbins):
     return hist, xbin, ybin
 
 def generate_hits(prob, xbin, ybin, x_vals, max_hits, n_features, device='cpu'):
+    '''
+    prob = 2D PDF of nhits vs incident energy
+    x/ybin = histogram bins
+    x_vals = sample of incident energies (sampled from GEANT4)
+    max_hits = number of hits in the shower with the largest # hits in the bucket(s)
+    n_features = # of feature dimensions e.g. (E,X,Y,Z) = 4
+    Returns:
+    pred_nhits = array of nhit values, one for each shower
+    y_pred = array of tensors (one for each shower) of initial noise values for features of each hit, sampled from normal distribution
+    '''
     ind = np.digitize(x_vals, xbin) - 1
     ind[ind==len(xbin)-1] = len(xbin)-2
-    ind[ind==-1] = 0    
+    ind[ind==-1] = 0
     y_pred = []
     pred_nhits = []
     prob_ = prob[ind,:]
     for i in range(len(prob_)):
         nhits = int(random_sampler(prob_[i],ybin + 1))
         pred_nhits.append(nhits)
-        y_pred.append(( torch.normal(0,1,size=(nhits, n_features), device=device) ) )
-    
+        # Generate random values for features in all 'nhits' hits
+        ytmp = torch.normal(0,1,size=(nhits, n_features), device=device)
+        y_pred.append( ytmp )
     return pred_nhits, y_pred
 
 def main():
