@@ -570,27 +570,29 @@ def get_prob_dist(x,y,nbins):
     hist[np.isnan(hist)] = 0.0
     return hist, xbin, ybin
 
-def generate_hits(prob, xbin, ybin, x_vals, max_hits, n_features, device='cpu'):
+def generate_hits(prob, xbin, ybin, x_vals, n_features, device='cpu'):
     '''
     prob = 2D PDF of nhits vs incident energy
     x/ybin = histogram bins
     x_vals = sample of incident energies (sampled from GEANT4)
-    max_hits = number of hits in the shower with the largest # hits in the bucket(s)
     n_features = # of feature dimensions e.g. (E,X,Y,Z) = 4
     Returns:
     pred_nhits = array of nhit values, one for each shower
     y_pred = array of tensors (one for each shower) of initial noise values for features of each hit, sampled from normal distribution
     '''
+    # bin index each incident energy falls into
     ind = np.digitize(x_vals, xbin) - 1
     ind[ind==len(xbin)-1] = len(xbin)-2
     ind[ind==-1] = 0
+    # Construct list of nhits for given incident energies
+    prob_ = prob[ind,:]
+    
     y_pred = []
     pred_nhits = []
-    prob_ = prob[ind,:]
     for i in range(len(prob_)):
         nhits = int(random_sampler(prob_[i],ybin + 1))
         pred_nhits.append(nhits)
-        # Generate random values for features in all 'nhits' hits
+        # Generate random values for features in all hits
         ytmp = torch.normal(0,1,size=(nhits, n_features), device=device)
         y_pred.append( ytmp )
     return pred_nhits, y_pred
