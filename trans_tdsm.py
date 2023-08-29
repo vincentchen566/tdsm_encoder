@@ -656,7 +656,7 @@ def main():
     dropout_gen = 0
     # SAMPLER PARAMETERS
     sampler_steps = 100
-    n_showers_2_gen = 100
+    n_showers_2_gen = 1000
 
     model_params = f'''
     ### PARAMS ###
@@ -991,9 +991,11 @@ def main():
         print(f'# showers per file: {nshowers_per_file}')
         shower_counter = 0
 
+        # create list to store final samples
         sample_ = []
+        # instantiate sampler 
         sampler = pc_sampler(sde=sde, padding_value=padding_value, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False)
-        
+
         # Collect Geant4 shower information
         for file_idx in range(len(files_list_)):
 
@@ -1096,8 +1098,7 @@ def main():
             fig0.savefig(savefigname)
 
             # Generate tensor sampled from the appropriate range of injection energies
-            idx_list_incident_e = torch.randint(0, len(incident_e_per_shower), (n_showers_2_gen,))
-            in_energies = torch.from_numpy(np.random.choice( incident_e_per_shower, n_showers_2_gen ))
+            in_energies = torch.from_numpy(np.random.choice( incident_e_per_shower, nshowers_per_file[file_idx] ))
             if file_idx == 0:
                 sampled_ine = in_energies
             else:
@@ -1124,7 +1125,6 @@ def main():
             # Loop over each batch of noise showers
             print(f'# batches: {len(gen_hits_loader)}' )
             for i, (gen_hit, sampled_energies) in enumerate(gen_hits_loader,0):
-                
                 print(f'Generation batch {i}: showers per batch: {gen_hit.shape[0]}, max. hits per shower: {gen_hit.shape[1]}, features per hit: {gen_hit.shape[2]}, sampled_energies: {len(sampled_energies)}')    
                 sys.stdout.write('\r')
                 sys.stdout.write("Progress: %d/%d \n" % ((i+1), len(gen_hits_loader)))
@@ -1144,10 +1144,11 @@ def main():
             sample_np = sample.cpu().numpy()
 
             for i in range(len(sample_np)):
-                tmp_sample = sample_np[i][:nhits[i]]
+                tmp_sample = sample_np[i]#[:nhits[i]]
                 sample_.append(torch.tensor(tmp_sample))
         
-        torch.save([sample_,in_energies], os.path.join(output_directory, 'sample.pt'))
+        print(f'sample_: {len(sample_)}, sampled_ine: {len(sampled_ine)}')
+        torch.save([sample_,sampled_ine], os.path.join(output_directory, 'sample.pt'))
 
         # Create plots of distributions evolving with diffusion steps
         print(f'Drawing diffusion plots for average hit X & Y positions')
@@ -1189,7 +1190,7 @@ def main():
         distributions = [
         ( ('Total deposited energy', 'Incident particle energy [GeV]'), 
         (geant_deposited_energy,
-        incident_e_per_shower[:n_showers_2_gen],
+        geant_ine,
         sampler.deposited_energy_step1,
         sampler.incident_e_step1, 
         sampler.deposited_energy_step25,
@@ -1214,7 +1215,7 @@ def main():
         ax1.set_yscale('log')
         ax1.legend(loc='upper right')
         
-        ax2.set_title('t=25')
+        ax2.set_title('t=0.2')
         ax2.set_ylabel('# entries')
         ax2.set_xlabel('Hit energy [GeV]')
         ax2.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
@@ -1222,7 +1223,7 @@ def main():
         ax2.set_yscale('log')
         ax2.legend(loc='upper right')
 
-        ax3.set_title('t=50')
+        ax3.set_title('t=0.1')
         ax3.set_ylabel('# entries')
         ax3.set_xlabel('Hit energy [GeV]')
         ax3.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
@@ -1230,7 +1231,7 @@ def main():
         ax3.set_yscale('log')
         ax3.legend(loc='upper right')
 
-        ax4.set_title('t=75')
+        ax4.set_title('t=0.05')
         ax4.set_ylabel('# entries')
         ax4.set_xlabel('Hit energy [GeV]')
         ax4.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
@@ -1238,7 +1239,7 @@ def main():
         ax4.set_yscale('log')
         ax4.legend(loc='upper right')
 
-        ax5.set_title('t=99')
+        ax5.set_title('t=0.0')
         ax5.set_ylabel('# entries')
         ax5.set_xlabel('Hit energy [GeV]')
         ax5.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
@@ -1252,13 +1253,13 @@ def main():
     if switches_>>3 & trigger:
         # Distributions object for generated files
         print(f'Generated inputs')
-        output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230804_0947_output')
+        output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230829_1147_output')
         print(f'Evaluation outputs stored here: {output_directory}')
         plot_file_name = os.path.join(output_directory, 'sample.pt')
         custom_data = utils.cloud_dataset(plot_file_name,device=device)
         # when providing just cloud dataset, energy_trans_file needs to include full path
         #dists_gen = util.display.plot_distribution(custom_data, energy_trans_file='/eos/user/j/jthomasw/tdsm_encoder/datasets/power_transformer/transform_e.pkl', nshowers_2_plot=n_showers_2_gen)
-        dists_gen = util.display.plot_distribution(custom_data, nshowers_2_plot=n_showers_2_gen)
+        dists_gen = util.display.plot_distribution(custom_data, nshowers_2_plot=n_showers_2_gen, padding_value=padding_value)
 
         entries_gen = dists_gen[0]
         all_incident_e_gen = dists_gen[1]
@@ -1274,7 +1275,7 @@ def main():
         print(f'Geant4 inputs')
         # Distributions object for Geant4 files
         #dists = util.display.plot_distribution(files_list_, energy_trans_file='transform_e.pkl', nshowers_2_plot=n_showers_2_gen)
-        dists = util.display.plot_distribution(files_list_, nshowers_2_plot=n_showers_2_gen)
+        dists = util.display.plot_distribution(files_list_, nshowers_2_plot=n_showers_2_gen, padding_value=padding_value)
 
         entries = dists[0]
         all_incident_e = dists[1]
