@@ -103,8 +103,8 @@ class EncoderBlock(nn.Module):
         #self.norm1 = AdaptiveBatchNorm2d(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
         #self.norm2 = AdaptiveBatchNorm2d(embed_dim)
-        self.dropout = nn.Dropout(dropout)
-        #self.dropout2 = nn.Dropout(0.2)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x, src_key_padding_mask=None):
         '''_src = self.attn(src, src, src, key_padding_mask=src_key_padding_mask)[0]
@@ -116,15 +116,22 @@ class EncoderBlock(nn.Module):
         src = src + _src.clone()
         src = self.norm2( src )'''
 
+        x2 = self.norm1(x)
+        attn_out = self.attn(x2, x2, x2, key_padding_mask=src_key_padding_mask)[0]
+        x = x + self.dropout1(attn_out)
+        x2 = self.norm2(x)
+        ffnn_out = self.ffnn(x2)
+        x = x + self.dropout2(ffnn_out)
+
         # Attention section
-        attn_out = self.attn(x, x, x, key_padding_mask=src_key_padding_mask)[0]
-        x = x + self.dropout(attn_out)
-        x = self.norm1(x)
+        #attn_out = self.attn(x, x, x, key_padding_mask=src_key_padding_mask)[0]
+        #x = x + self.dropout1(attn_out)
+        #x = self.norm1(x)
 
         # Fully-connected section
-        ffnn_out = self.ffnn(x)
-        x = x + self.dropout(ffnn_out)
-        x = self.norm2(x)
+        #ffnn_out = self.ffnn(x)
+        #x = x + self.dropout1(ffnn_out)
+        #x = self.norm2(x)
 
         return x
 
@@ -652,7 +659,7 @@ def main():
     embed_dim = 512
     hidden_dim = 128
     num_encoder_blocks = 3
-    num_attn_heads = 8
+    num_attn_heads = 16
     dropout_gen = 0
     # SAMPLER PARAMETERS
     sampler_steps = 100
@@ -699,7 +706,7 @@ def main():
     if switches_ & trigger:
         # Limited to n_showers_2_gen showers in for plots
         # Transformed variables
-        dists_trans = util.display.plot_distribution(files_list_, n_showers_2_gen)
+        dists_trans = util.display.plot_distribution(files_list_, nshowers_2_plot=n_showers_2_gen, padding_value=padding_value)
         entries = dists_trans[0]
         all_incident_e_trans = dists_trans[1]
         total_deposited_e_shower_trans = dists_trans[2]
@@ -711,8 +718,9 @@ def main():
         average_x_shower_trans = dists_trans[8]
         average_y_shower_trans = dists_trans[9]
 
+        '''
         # Non-transformed variables
-        dists = util.display.plot_distribution(files_list_, n_showers_2_gen, energy_trans_file='transform_e.pkl', x_trans_file='transform_x.pkl', y_trans_file='transform_y.pkl', ine_trans_file='rescaler_y.pkl')
+        dists = util.display.plot_distribution(files_list_, nshowers_2_plot=n_showers_2_gen, padding_value=padding_value, energy_trans_file='transform_e.pkl', x_trans_file='transform_x.pkl', y_trans_file='transform_y.pkl', ine_trans_file='rescaler_y.pkl')
         entries = dists[0]
         all_incident_e = dists[1]
         total_deposited_e_shower = dists[2]
@@ -725,6 +733,7 @@ def main():
         average_y_shower = dists[9]
 
         ### 2D scatter plots
+        
         print('Plot individual X vs. individual hit energy')
         distributions = [(('X', 'Hit energy [GeV]', 'Incident energy [GeV]') , (all_x, all_e, all_hit_ine, all_x_trans, all_e_trans, all_hit_ine_trans))]
         util.display.make_plot(distributions,training_file_path)
@@ -744,6 +753,7 @@ def main():
         print('Plot incident vs. average hit energy')
         distributions = [(('Incident energy [GeV]', 'Av. Energy Deposited [GeV]', 'Incident energy [GeV]') , (all_incident_e, total_deposited_e_shower, all_incident_e, all_incident_e_trans, total_deposited_e_shower_trans, all_incident_e_trans))]
         util.display.make_plot(distributions,training_file_path)
+        '''
 
         ### 1D histograms
         fig, ax = plt.subplots(3,3, figsize=(12,12))
@@ -956,7 +966,7 @@ def main():
         
         # Load saved model
         model=Gen(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
-        load_name = os.path.join(workingdir,'training_20230825_1601_output/ckpt_tmp_499.pth')
+        load_name = os.path.join(workingdir,'training_20230830_1430_output/ckpt_tmp_499.pth')
         model.load_state_dict(torch.load(load_name, map_location=device))
         model.to(device)
 
@@ -1209,7 +1219,7 @@ def main():
         bins=np.histogram(np.hstack((geant_deposited_energy,sampler.deposited_energy_step1)), bins=50)[1]
         ax1.set_title('t=1')
         ax1.set_ylabel('# entries')
-        ax1.set_xlabel('Hit energy [GeV]')
+        ax1.set_xlabel('Total deposited energy [GeV]')
         ax1.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
         ax1.hist(sampler.deposited_energy_step1, bins, alpha=0.5, color='blue', label='Gen')
         ax1.set_yscale('log')
@@ -1217,7 +1227,7 @@ def main():
         
         ax2.set_title('t=0.2')
         ax2.set_ylabel('# entries')
-        ax2.set_xlabel('Hit energy [GeV]')
+        ax2.set_xlabel('Total deposited energy [GeV]')
         ax2.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
         ax2.hist(sampler.deposited_energy_step25, bins, alpha=0.5, color='blue', label='Gen')
         ax2.set_yscale('log')
@@ -1225,7 +1235,7 @@ def main():
 
         ax3.set_title('t=0.1')
         ax3.set_ylabel('# entries')
-        ax3.set_xlabel('Hit energy [GeV]')
+        ax3.set_xlabel('Total deposited energy [GeV]')
         ax3.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
         ax3.hist(sampler.deposited_energy_step50, bins, alpha=0.5, color='blue', label='Gen')
         ax3.set_yscale('log')
@@ -1233,7 +1243,7 @@ def main():
 
         ax4.set_title('t=0.05')
         ax4.set_ylabel('# entries')
-        ax4.set_xlabel('Hit energy [GeV]')
+        ax4.set_xlabel('Total deposited energy [GeV]')
         ax4.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
         ax4.hist(sampler.deposited_energy_step75, bins, alpha=0.5, color='blue', label='Gen')
         ax4.set_yscale('log')
@@ -1241,19 +1251,19 @@ def main():
 
         ax5.set_title('t=0.0')
         ax5.set_ylabel('# entries')
-        ax5.set_xlabel('Hit energy [GeV]')
+        ax5.set_xlabel('Total deposited energy [GeV]')
         ax5.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
         ax5.hist(sampler.deposited_energy_step99, bins, alpha=0.5, color='blue', label='Gen')
         ax5.set_yscale('log')
         ax5.legend(loc='upper right')
 
-        fig.savefig(os.path.join(output_directory,'deposited_energy_diffusion.png'))
+        fig.savefig(os.path.join(output_directory,'total_deposited_energy_diffusion.png'))
 
     #### Evaluation plots ####
     if switches_>>3 & trigger:
         # Distributions object for generated files
         print(f'Generated inputs')
-        output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230829_1147_output')
+        output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230829_1606_output')
         print(f'Evaluation outputs stored here: {output_directory}')
         plot_file_name = os.path.join(output_directory, 'sample.pt')
         custom_data = utils.cloud_dataset(plot_file_name,device=device)
@@ -1303,7 +1313,7 @@ def main():
         ax[0][1].set_xlabel('Hit energy [GeV]')
         ax[0][1].hist(all_e, bins, alpha=0.5, color='orange', label='Geant4')
         ax[0][1].hist(all_e_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[0][1].set_yscale('log')
+        #ax[0][1].set_yscale('log')
         ax[0][1].legend(loc='upper right')
 
         print('Plot hit x')
@@ -1312,7 +1322,7 @@ def main():
         ax[0][2].set_xlabel('Hit x position')
         ax[0][2].hist(all_x, bins, alpha=0.5, color='orange', label='Geant4')
         ax[0][2].hist(all_x_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[0][2].set_yscale('log')
+        #ax[0][2].set_yscale('log')
         ax[0][2].legend(loc='upper right')
 
         print('Plot hit y')
@@ -1321,7 +1331,7 @@ def main():
         ax[1][0].set_xlabel('Hit y position')
         ax[1][0].hist(all_y, bins, alpha=0.5, color='orange', label='Geant4')
         ax[1][0].hist(all_y_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[1][0].set_yscale('log')
+        #ax[1][0].set_yscale('log')
         ax[1][0].legend(loc='upper right')
 
         print('Plot hit z')
@@ -1330,7 +1340,7 @@ def main():
         ax[1][1].set_xlabel('Hit z position')
         ax[1][1].hist(all_z, bins, alpha=0.5, color='orange', label='Geant4')
         ax[1][1].hist(all_z_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[1][1].set_yscale('log')
+        #ax[1][1].set_yscale('log')
         ax[1][1].legend(loc='upper right')
 
         print('Plot incident energies')
@@ -1339,7 +1349,7 @@ def main():
         ax[1][2].set_xlabel('Incident energies [GeV]')
         ax[1][2].hist(all_incident_e, bins, alpha=0.5, color='orange', label='Geant4')
         ax[1][2].hist(all_incident_e_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[1][2].set_yscale('log')
+        #ax[1][2].set_yscale('log')
         ax[1][2].legend(loc='upper right')
 
         print('Plot total deposited hit energy')
@@ -1348,7 +1358,7 @@ def main():
         ax[2][0].set_xlabel('Deposited energy [GeV]')
         ax[2][0].hist(total_deposited_e_shower, bins, alpha=0.5, color='orange', label='Geant4')
         ax[2][0].hist(total_deposited_e_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[2][0].set_yscale('log')
+        #ax[2][0].set_yscale('log')
         ax[2][0].legend(loc='upper right')
 
         print('Plot average hit X position')
@@ -1357,7 +1367,7 @@ def main():
         ax[2][1].set_xlabel('Average X pos.')
         ax[2][1].hist(average_x_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
         ax[2][1].hist(average_x_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[2][1].set_yscale('log')
+        #ax[2][1].set_yscale('log')
         ax[2][1].legend(loc='upper right')
 
         print('Plot average hit Y position')
@@ -1366,7 +1376,7 @@ def main():
         ax[2][2].set_xlabel('Average Y pos.')
         ax[2][2].hist(average_y_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
         ax[2][2].hist(average_y_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
-        ax[2][2].set_yscale('log')
+        #ax[2][2].set_yscale('log')
         ax[2][2].legend(loc='upper right')
 
         fig_name = os.path.join(output_directory, 'Geant_Gen_comparison.png')
