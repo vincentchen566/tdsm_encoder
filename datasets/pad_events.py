@@ -156,8 +156,8 @@ def main():
     # Fit the transformation functions
     if transform == 1:
         print(f'Fitting transformation function for hit energies')
-        transform_e = MinMaxScaler(feature_range=(1,2)).fit(E_)
-        #transform_e = QuantileTransformer(output_distribution="uniform").fit(E_)
+        #transform_e = MinMaxScaler(feature_range=(1,2)).fit(E_)
+        transform_e = QuantileTransformer(output_distribution="uniform").fit(E_)
         print(f'Fitting transformation function for hit X')
         transform_x = MinMaxScaler(feature_range=(1,2)).fit(X_)
         #transform_x = QuantileTransformer(output_distribution="uniform").fit(X_)
@@ -166,7 +166,7 @@ def main():
         #transform_y = QuantileTransformer(output_distribution="uniform").fit(Y_)
         print(f'Fitting transformation function for incident energies')
         #rescaler_y = MinMaxScaler(feature_range=(1,2)).fit(all_files_inenergy)
-        #rescaler_y = QuantileTransformer(output_distribution="uniform").fit(all_files_inenergy)
+        rescaler_y = QuantileTransformer(output_distribution="uniform").fit(all_files_inenergy)
     
 
     # For each file
@@ -225,7 +225,7 @@ def main():
                     #E_ = trans_.transform_e(E_, 1, 2)
                     #X_ = trans_.transform_x(X_, 1, 2)
                     #Y_ = trans_.transform_y(Y_, 1, 2)
-                    E_ = transform_e.transform(E_)#+1
+                    E_ = transform_e.transform(E_)+1
                     X_ = transform_x.transform(X_)
                     Y_ = transform_y.transform(Y_)
                     
@@ -241,8 +241,6 @@ def main():
                 shower_count+=1
              
             torch.save([padded_showers,incident_energies], outfilename)
-
-
             
 
             ############
@@ -250,11 +248,11 @@ def main():
             ############
 
             # Need to save transformation functions if we want to invert the same transformation later
-            #if transform == 1:
-                #dump(rescaler_y, open( os.path.join(odir,'rescaler_y.pkl') , 'wb'))
-                #dump(trans_.transform_e, open( os.path.join(odir,'transform_e.pkl') , 'wb'))
-                #dump(trans_.transform_x, open(os.path.join(odir,'transform_x.pkl') , 'wb'))
-                #dump(trans_.transform_y, open(os.path.join(odir,'transform_y.pkl') , 'wb'))
+            if transform == 1:
+                dump(rescaler_y, open( os.path.join(odir,'rescaler_y.pkl') , 'wb'))
+                dump(transform_e, open( os.path.join(odir,'transform_e.pkl') , 'wb'))
+                dump(transform_x, open(os.path.join(odir,'transform_x.pkl') , 'wb'))
+                dump(transform_y, open(os.path.join(odir,'transform_y.pkl') , 'wb'))
             
             padded_loaded_file = torch.load(outfilename)
             padded_showers = padded_loaded_file[0]
