@@ -31,9 +31,9 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
     all_z = []
     shower_hit_ine = []
     total_deposited_e_shower = []
-    average_x_shower = []
-    average_y_shower = []
-    average_z_shower = []
+    sum_x_shower = []
+    sum_y_shower = []
+    sum_z_shower = []
     all_incident_e = []
     entries = []
     GeV = 1/1000
@@ -86,7 +86,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 incident_energies = incident_energies.cpu().numpy().copy()
                 
                 # Mask for padded values
-                mask = ~(data_np[:,:,0] == padding_value)
+                mask = ~(data_np[:,:,0] < 1)
                 
                 incident_energies = np.array(incident_energies).reshape(-1,1)
                 if ine_trans_file != '':
@@ -101,7 +101,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     shower_counter+=1
                     
                     # Only use non-padded values for plots
-                    valid_hits = data_np[j]#[mask[j]]
+                    valid_hits = data_np[j][mask[j]]
                     
                     # To transform back to original energies for plots
                     all_e = np.array(valid_hits[:,0]).reshape(-1,1)
@@ -133,10 +133,10 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     total_deposited_e_shower.extend([ sum(all_e) ])
                     # Incident energies
                     all_incident_e.extend( [incident_energies[j]] )
-                    # Hit position averages
-                    average_x_shower.extend( [np.mean(all_x)] )
-                    average_y_shower.extend( [np.mean(all_y)] )
-                    average_z_shower.extend( [np.mean(all_z)] )
+                    # Hit position sum
+                    sum_x_shower.extend( [np.sum(all_x)] )
+                    sum_y_shower.extend( [np.sum(all_y)] )
+                    sum_z_shower.extend( [np.sum(all_z)] )
                     
     elif type(files_) == utils.cloud_dataset:
         print(f'plot_distribution running on input type \'cloud_dataset\'')
@@ -151,7 +151,8 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             valid_hits = []
             data_np = shower_data.cpu().numpy().copy()
             energy_np = incident_energies.cpu().numpy().copy()
-            mask = ~(data_np[:,:,0] == padding_value)
+            
+            #mask = ~(data_np[:,:,0] < 1)
             
             # For each shower in batch
             for j in range(len(data_np)):
@@ -187,43 +188,44 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 total_deposited_e_shower.extend( [sum(all_e)] )
                 # Incident energies
                 all_incident_e.extend( [energy_np[j]] )
-                # Hit position averages
-                average_x_shower.extend( [np.mean(all_x)] )
-                average_y_shower.extend( [np.mean(all_y)] )
-                average_z_shower.extend( [np.mean(all_z)] )
+                # Hit position sum
+                sum_x_shower.extend( [np.mean(all_x)] )
+                sum_y_shower.extend( [np.mean(all_y)] )
+                sum_z_shower.extend( [np.mean(all_z)] )
 
-    return [entries, all_incident_e, total_deposited_e_shower, shower_hit_energies, shower_hit_x, shower_hit_y, all_z, shower_hit_ine, average_x_shower, average_y_shower, average_z_shower]
+    return [entries, all_incident_e, total_deposited_e_shower, shower_hit_energies, shower_hit_x, shower_hit_y, all_z, shower_hit_ine, sum_x_shower, sum_y_shower, sum_z_shower]
 
 def perturbation_1D(distributions, outdir='./'):
     xlabel = distributions[0][0]
     p0, p1, p2, p3, p4, p5 = distributions[0][1]
     
     fig, axs_1 = plt.subplots(1,5, figsize=(24,8), sharex=True, sharey=True)
-    bins=np.histogram(np.hstack((p0,p1)), bins=50)[1]
+    #bins=np.histogram(np.hstack((p0,p1)), bins=50)[1]
+    bins = np.linspace(0., 2., num=50)
     axs_1[0].set_xlabel(xlabel)
     axs_1[0].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[0].hist(p1, bins, alpha=0.5, color='red', label='perturbed')
-    axs_1[0].set_yscale('log')
+    #axs_1[0].set_yscale('log')
     axs_1[0].legend(loc='upper right')
 
     axs_1[1].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[1].hist(p2, bins, alpha=0.5, color='red', label='perturbed')
-    axs_1[1].set_yscale('log')
+    #axs_1[1].set_yscale('log')
     axs_1[1].legend(loc='upper right')
 
     axs_1[2].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[2].hist(p3, bins, alpha=0.5, color='red', label='perturbed')
-    axs_1[2].set_yscale('log')
+    #axs_1[2].set_yscale('log')
     axs_1[2].legend(loc='upper right')
 
     axs_1[3].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[3].hist(p4, bins, alpha=0.5, color='red', label='perturbed')
-    axs_1[3].set_yscale('log')
+    #axs_1[3].set_yscale('log')
     axs_1[3].legend(loc='upper right')
     
     axs_1[4].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[4].hist(p5, bins, alpha=0.5, color='red', label='perturbed')
-    axs_1[4].set_yscale('log')
+    #axs_1[4].set_yscale('log')
     axs_1[4].legend(loc='upper right')
     
     fig.show()

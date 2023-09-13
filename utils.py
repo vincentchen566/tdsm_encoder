@@ -166,6 +166,7 @@ class VPSDE:
     return drift, diffusion
 
   def marginal_prob(self, x, t):
+    # Mean and std used to define the perturbation kernel
     log_mean_coeff = -0.25 * t ** 2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
     # For t~0, the following multiplies x by a number initially ~ 1, which gets smaller as time progresses to t~1
     mean = torch.exp(log_mean_coeff[:, None, None]) * x
