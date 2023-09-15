@@ -86,7 +86,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 incident_energies = incident_energies.cpu().numpy().copy()
                 
                 # Mask for padded values
-                mask = ~(data_np[:,:,0] < 1)
+                mask = ~(data_np[:,:,0] == 0)
                 
                 incident_energies = np.array(incident_energies).reshape(-1,1)
                 if ine_trans_file != '':
@@ -101,7 +101,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     shower_counter+=1
                     
                     # Only use non-padded values for plots
-                    valid_hits = data_np[j][mask[j]]
+                    valid_hits = data_np[j]#[mask[j]]
                     
                     # To transform back to original energies for plots
                     all_e = np.array(valid_hits[:,0]).reshape(-1,1)
@@ -152,7 +152,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             data_np = shower_data.cpu().numpy().copy()
             energy_np = incident_energies.cpu().numpy().copy()
             
-            #mask = ~(data_np[:,:,0] < 1)
+            mask = ~(data_np[:,:,0] == 0)
             
             # For each shower in batch
             for j in range(len(data_np)):
@@ -189,9 +189,9 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 # Incident energies
                 all_incident_e.extend( [energy_np[j]] )
                 # Hit position sum
-                sum_x_shower.extend( [np.mean(all_x)] )
-                sum_y_shower.extend( [np.mean(all_y)] )
-                sum_z_shower.extend( [np.mean(all_z)] )
+                sum_x_shower.extend( [np.sum(all_x)] )
+                sum_y_shower.extend( [np.sum(all_y)] )
+                sum_z_shower.extend( [np.sum(all_z)] )
 
     return [entries, all_incident_e, total_deposited_e_shower, shower_hit_energies, shower_hit_x, shower_hit_y, all_z, shower_hit_ine, sum_x_shower, sum_y_shower, sum_z_shower]
 
@@ -201,7 +201,7 @@ def perturbation_1D(distributions, outdir='./'):
     
     fig, axs_1 = plt.subplots(1,5, figsize=(24,8), sharex=True, sharey=True)
     #bins=np.histogram(np.hstack((p0,p1)), bins=50)[1]
-    bins = np.linspace(0., 2., num=50)
+    bins = np.linspace(0., 3., num=50)
     axs_1[0].set_xlabel(xlabel)
     axs_1[0].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[0].hist(p1, bins, alpha=0.5, color='red', label='perturbed')
@@ -467,8 +467,10 @@ def make_diffusion_plot(distributions, outdir=''):
     ax_X, ax_T1, ax_T2, ax_T3, ax_T4 = create_axes_diffusion(int(n_plots))
     axarr = (ax_X, ax_T1, ax_T2, ax_T3, ax_T4)
     
-    x_lim = ( min(min(gen_x_t1),min(geant_x)) , max(max(gen_x_t1),max(geant_x)) )
-    y_lim = ( min(min(gen_y_t1),min(geant_y)) , max(max(gen_y_t1),max(geant_y)) )
+    #x_lim = ( min(min(gen_x_t1),min(geant_x)) , max(max(gen_x_t1),max(geant_x)) )
+    x_lim = ( -30 , 1000 )
+    #y_lim = ( min(min(gen_y_t1),min(geant_y)) , max(max(gen_y_t1),max(geant_y)) )
+    y_lim = ( -30 , 1000 )
     
     plot_diffusion_xy(
         axarr[0],

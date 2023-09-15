@@ -225,8 +225,11 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     # Generate padding mask for padded entries
     # Positions with True are ignored while False values will be unchanged
     padding_mask = (x[:,:,0] == 0).type(torch.bool)
+    #padding_mask = (x[:,:,0] <= 1).type(torch.bool)
+    
     # Inverse mask to ignore for when 0-padded hits should be ignored
     output_mask = (x[:,:,0] != 0).type(torch.int)
+    #output_mask = (x[:,:,0] > 1).type(torch.int)
     output_mask = output_mask.unsqueeze(-1)
     output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
     
@@ -250,7 +253,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     losses = torch.square(scores*std_[:,None,None] + z)
 
     # Zero losses calculated over padded inputs
-    losses = losses#*output_mask
+    losses = losses
     
     # Losses across all hits and 4-vectors (normalise by number of hits)
     losses = torch.mean( losses, dim=(1,2))
@@ -334,13 +337,13 @@ class pc_sampler:
 
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
+        #padding_mask = (init_x[:,:,0] <= 1).type(torch.bool)
 
         # Inverse mask to ignore models output for 0-padded hits in loss
         output_mask = (init_x[:,:,0]!= self.padding_value).type(torch.int)
+        #output_mask = (init_x[:,:,0] > 1).type(torch.int)
         output_mask = output_mask.unsqueeze(-1)
         output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
-        
-        #print(f'output_mask: {output_mask}')
         
         # Establish time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
@@ -538,13 +541,8 @@ class pc_sampler:
                         self.av_y_pos_step75.append( av_y_position )
                 if diffusion_step_== 99:
                     for shower_idx in range(0,len(x_mean)):
-                        
-                        # Inverse mask to ignore models output for 0-padded hits in loss
-                        output_mask_e = (x_mean[:,:,0] > 1 ).type(torch.int)
-                        output_mask_e = output_mask_e.unsqueeze(-1)
-                        output_mask_e = output_mask_e.expand(output_mask_e.size()[0], output_mask_e.size()[1],4)
 
-                        masked_output = x_mean#*output_mask_e
+                        masked_output = x_mean
                         
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
                         if ine_trans_file != '':
@@ -578,9 +576,7 @@ class pc_sampler:
                         
                 diffusion_step_+=1
         # Do not include noise in last step
-        # Need to remove padded hits?
-        #print('returned x_mean = ', x_mean*output_mask)
-        x_mean = x_mean#*output_mask
+        x_mean = x_mean
         return x_mean
 
 def check_mem():
@@ -1065,6 +1061,7 @@ def main():
 
                 # Mask for padded values (padded values set to 0)
                 masking = data_np[:,:,0] != padding_value
+                #masking = data_np[:,:,0] > 1
 
                 # Loop over each shower in batch
                 for j in range(len(data_np)):

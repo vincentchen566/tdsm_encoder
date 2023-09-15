@@ -159,11 +159,11 @@ def main():
         #transform_e = MinMaxScaler(feature_range=(1,2)).fit(E_)
         transform_e = QuantileTransformer(output_distribution="uniform").fit(E_)
         print(f'Fitting transformation function for hit X')
-        transform_x = MinMaxScaler(feature_range=(1,2)).fit(X_)
-        #transform_x = QuantileTransformer(output_distribution="uniform").fit(X_)
+        #transform_x = MinMaxScaler(feature_range=(1,2)).fit(X_)
+        transform_x = QuantileTransformer(output_distribution="uniform").fit(X_)
         print(f'Fitting transformation function for hit Y')
-        transform_y = MinMaxScaler(feature_range=(1,2)).fit(Y_)
-        #transform_y = QuantileTransformer(output_distribution="uniform").fit(Y_)
+        #transform_y = MinMaxScaler(feature_range=(1,2)).fit(Y_)
+        transform_y = QuantileTransformer(output_distribution="uniform").fit(Y_)
         print(f'Fitting transformation function for incident energies')
         #rescaler_y = MinMaxScaler(feature_range=(1,2)).fit(all_files_inenergy)
         rescaler_y = QuantileTransformer(output_distribution="uniform").fit(all_files_inenergy)
@@ -199,9 +199,9 @@ def main():
             
             # Transform the incident energies
             incident_energies = np.asarray( incident_energies ).reshape(-1, 1)
-            #if transform == 1:
-            #    # Rescale the conditional input for each shower
-            #    incident_energies = rescaler_y.transform(incident_energies)
+            if transform == 1:
+                # Rescale the conditional input for each shower
+                incident_energies = rescaler_y.transform(incident_energies)
             incident_energies = torch.from_numpy( incident_energies.flatten() )
             
             # Rescale hit energy and position and do padding
@@ -220,24 +220,43 @@ def main():
                 E_ = np.asarray(showers[:,0]*GeV).reshape(-1, 1)
                 X_ = np.asarray(showers[:,1]).reshape(-1, 1)
                 Y_ = np.asarray(showers[:,2]).reshape(-1, 1)
+                Z_ = np.asarray(showers[:,3]).reshape(-1, 1)
                 if transform == 1:
 
                     #E_ = trans_.transform_e(E_, 1, 2)
                     #X_ = trans_.transform_x(X_, 1, 2)
                     #Y_ = trans_.transform_y(Y_, 1, 2)
                     E_ = transform_e.transform(E_)+1
-                    X_ = transform_x.transform(X_)
-                    Y_ = transform_y.transform(Y_)
+                    X_ = transform_x.transform(X_)+1
+                    Y_ = transform_y.transform(Y_)+1
+                    Z_ = Z_+1
                     
                 E_ = torch.from_numpy( E_.flatten() )
                 X_ = torch.from_numpy( X_.flatten() )
                 Y_ = torch.from_numpy( Y_.flatten() )
-                Z_ = showers[:,3]
+                Z_ = torch.from_numpy( Z_.flatten() )
                 shower_data_transformed = torch.stack((E_,X_,Y_,Z_), -1)
                 
                 # Homogenise data with padding to make all showers the same length
                 padded_shower = F.pad(input = shower_data_transformed, pad=(0,0,0,pad_hits), mode='constant', value=0.0)
+                
+                # normal padding
                 padded_showers.append(padded_shower)
+                
+                # Smear padded data with values == 0
+                # Be careful to ensure that valid data doesn't have values == 0
+                # May need to cap the values to ensure padded values not smeared into valid distribution?
+                #noise = torch.normal(0,0.2,size=padded_shower.shape)
+                #noise = torch.rand(padded_shower.shape)
+                #mask_valid = (padded_shower[:,:] == 0).type(torch.int)
+                #noise = noise*mask_valid
+                #tmp = noise.clone()
+                #tmp[noise==0]=1
+                #new_padded_shower = padded_shower.clone()
+                #new_padded_shower[padded_shower==0]=1
+                #new_padded_shower = new_padded_shower*tmp
+                #padded_showers.append(new_padded_shower)
+                
                 shower_count+=1
              
             torch.save([padded_showers,incident_energies], outfilename)
@@ -293,10 +312,14 @@ def main():
 
                 mask = hit_energies != 0.0
 
-                real_hit_energies = torch.masked_select(hit_energies,mask)
-                real_hit_xs = torch.masked_select(hit_xs,mask)
-                real_hit_ys = torch.masked_select(hit_ys,mask)
-                real_hit_zs = torch.masked_select(hit_zs,mask)
+                #real_hit_energies = torch.masked_select(hit_energies,mask)
+                real_hit_energies = hit_energies
+                #real_hit_xs = torch.masked_select(hit_xs,mask)
+                real_hit_xs = hit_xs
+                #real_hit_ys = torch.masked_select(hit_ys,mask)
+                real_hit_ys = hit_ys
+                #real_hit_zs = torch.masked_select(hit_zs,mask)
+                real_hit_zs = hit_zs
                 
                 '''
                 # Invert transformation for plots in original variable space (also checks inversion works)
