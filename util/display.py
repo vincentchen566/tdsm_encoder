@@ -201,31 +201,31 @@ def perturbation_1D(distributions, outdir='./'):
     
     fig, axs_1 = plt.subplots(1,5, figsize=(24,8), sharex=True, sharey=True)
     #bins=np.histogram(np.hstack((p0,p1)), bins=50)[1]
-    bins = np.linspace(0., 3., num=50)
+    bins = np.linspace(0., 1., num=25)
     axs_1[0].set_xlabel(xlabel)
     axs_1[0].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[0].hist(p1, bins, alpha=0.5, color='red', label='perturbed')
-    #axs_1[0].set_yscale('log')
+    axs_1[0].set_yscale('log')
     axs_1[0].legend(loc='upper right')
 
     axs_1[1].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[1].hist(p2, bins, alpha=0.5, color='red', label='perturbed')
-    #axs_1[1].set_yscale('log')
+    axs_1[1].set_yscale('log')
     axs_1[1].legend(loc='upper right')
 
     axs_1[2].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[2].hist(p3, bins, alpha=0.5, color='red', label='perturbed')
-    #axs_1[2].set_yscale('log')
+    axs_1[2].set_yscale('log')
     axs_1[2].legend(loc='upper right')
 
     axs_1[3].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[3].hist(p4, bins, alpha=0.5, color='red', label='perturbed')
-    #axs_1[3].set_yscale('log')
+    axs_1[3].set_yscale('log')
     axs_1[3].legend(loc='upper right')
     
     axs_1[4].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[4].hist(p5, bins, alpha=0.5, color='red', label='perturbed')
-    #axs_1[4].set_yscale('log')
+    axs_1[4].set_yscale('log')
     axs_1[4].legend(loc='upper right')
     
     fig.show()
@@ -467,10 +467,8 @@ def make_diffusion_plot(distributions, outdir=''):
     ax_X, ax_T1, ax_T2, ax_T3, ax_T4 = create_axes_diffusion(int(n_plots))
     axarr = (ax_X, ax_T1, ax_T2, ax_T3, ax_T4)
     
-    #x_lim = ( min(min(gen_x_t1),min(geant_x)) , max(max(gen_x_t1),max(geant_x)) )
-    x_lim = ( -30 , 1000 )
-    #y_lim = ( min(min(gen_y_t1),min(geant_y)) , max(max(gen_y_t1),max(geant_y)) )
-    y_lim = ( -30 , 1000 )
+    x_lim = ( min(min(gen_x_t1),min(geant_x)) , max(max(gen_x_t1),max(geant_x)) )
+    y_lim = ( min(min(gen_y_t1),min(geant_y)) , max(max(gen_y_t1),max(geant_y)) )
     
     plot_diffusion_xy(
         axarr[0],
@@ -478,7 +476,7 @@ def make_diffusion_plot(distributions, outdir=''):
         gen_y_t1,
         geant_x,
         geant_y,
-        hist_nbins=100,
+        hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
         name='t=1 (noisy)',
@@ -486,15 +484,15 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    x_lim = ( min(min(gen_x_t25),min(geant_x)) , max(max(gen_x_t25),max(geant_x)) )
-    y_lim = ( min(min(gen_y_t25),min(geant_y)) , max(max(gen_y_t25),max(geant_y)) )
+    #x_lim = ( min(min(gen_x_t25),min(geant_x)) , max(max(gen_x_t25),max(geant_x)) )
+    #y_lim = ( min(min(gen_y_t25),min(geant_y)) , max(max(gen_y_t25),max(geant_y)) )
     plot_diffusion_xy(
         axarr[1],
         gen_x_t25,
         gen_y_t25,
         geant_x,
         geant_y,
-        hist_nbins=100,
+        hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
         name='t=0.75',
@@ -502,15 +500,15 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    x_lim = ( min(min(gen_x_t50),min(geant_x)) , max(max(gen_x_t50),max(geant_x)) )
-    y_lim = ( min(min(gen_y_t50),min(geant_y)) , max(max(gen_y_t50),max(geant_y)) )
+    #x_lim = ( min(min(gen_x_t50),min(geant_x)) , max(max(gen_x_t50),max(geant_x)) )
+    #y_lim = ( min(min(gen_y_t50),min(geant_y)) , max(max(gen_y_t50),max(geant_y)) )
     plot_diffusion_xy(
         axarr[2],
         gen_x_t50,
         gen_y_t50,
         geant_x,
         geant_y,
-        hist_nbins=100,
+        hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
         name='t=0.50',
@@ -518,15 +516,15 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    x_lim = ( min(min(gen_x_t75),min(geant_x)) , max(max(gen_x_t75),max(geant_x)) )
-    y_lim = ( min(min(gen_y_t75),min(geant_y)) , max(max(gen_y_t75),max(geant_y)) )
+    #x_lim = ( min(min(gen_x_t75),min(geant_x)) , max(max(gen_x_t75),max(geant_x)) )
+    #y_lim = ( min(min(gen_y_t75),min(geant_y)) , max(max(gen_y_t75),max(geant_y)) )
     plot_diffusion_xy(
         axarr[3],
         gen_x_t75,
         gen_y_t75,
         geant_x,
         geant_y,
-        hist_nbins=100,
+        hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
         name='t=0.25',
@@ -534,15 +532,15 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    x_lim = ( min(min(gen_x_t99),min(geant_x)) , max(max(gen_x_t99),max(geant_x)) )
-    y_lim = ( min(min(gen_y_t99),min(geant_y)) , max(max(gen_y_t99),max(geant_y)) )
+    #x_lim = ( min(min(gen_x_t99),min(geant_x)) , max(max(gen_x_t99),max(geant_x)) )
+    #y_lim = ( min(min(gen_y_t99),min(geant_y)) , max(max(gen_y_t99),max(geant_y)) )
     plot_diffusion_xy(
         axarr[4],
         gen_x_t99,
         gen_y_t99,
         geant_x,
         geant_y,
-        hist_nbins=100,
+        hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
         name='t=0.0 (after 100 steps)',

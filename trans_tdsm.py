@@ -5,15 +5,13 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam, RAdam
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import Dataset, DataLoader
 import utils
 from prettytable import PrettyTable
 import util.dataset_structure, util.display, util.model
 import tqdm
 from pickle import load
-
-#import torch.multiprocessing as mp
-#import wandb
 
 class GaussianFourierProjection(nn.Module):
     """Gaussian random features for encoding time steps"""
@@ -51,7 +49,7 @@ class Dense(nn.Module):
         return self.dense(x)[..., None]
 
 class Block(nn.Module):
-    def __init__(self, embed_dim, num_heads, hidden, dropout):
+    def __init__(self, embed_dim, num_heads, hidden_dim, dropout):
         """Encoder block:
         Args:
         embed_dim: length of embedding / dimension of the model
@@ -60,33 +58,44 @@ class Block(nn.Module):
         dropout: regularising layer
         """
         super().__init__()
-        # batch_first=True because normally in NLP the batch dimension would be the second dimension
-        # In everything(?) else it is the first dimension so this flag is set to true to match other conventions
-        self.attn = nn.MultiheadAttention(embed_dim, num_heads, kdim=embed_dim, vdim=embed_dim, batch_first=True, dropout=0)
-        self.fc1 = nn.Linear(embed_dim, hidden)
-        self.fc2 = nn.Linear(hidden, embed_dim)
-        self.fc1_cls = nn.Linear(embed_dim, hidden)
-        self.fc2_cls = nn.Linear(hidden, embed_dim)
-        self.act = nn.GELU()
-        self.dropout = nn.Dropout(dropout)
-        self.act_dropout = nn.Dropout(dropout)
-        self.hidden = hidden
+        # Need to set batch_first=True
+        # Normally in NLP the batch dimension would be the second dimension
+        # In most practices it's the first dimension so we match other conventions
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True, dropout=0)
+        
+        self.ffnn = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.Dropout(dropout),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim)
+        )
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
 
     def forward(self,x,x_cls,src_key_padding_mask=None,):
-        # Stash original embedded input
-        residual = x.clone()
+        #residual = x.clone()
+        
+        print(f'x {x.shape}: {x}')
+        print(f'x_cls {x_cls.shape}: {x_cls}')
+        # Mean-field attention
         # Multiheaded self-attention but replacing query with a single mean field approximator
-        x_cls = self.attn(x_cls, x, x, key_padding_mask=src_key_padding_mask)[0]
-        x_cls = self.act(self.fc1_cls(x_cls))
-        x_cls = self.act_dropout(x_cls)
-        x_cls = self.fc2(x_cls)
-        # Add mean field approximation to input embedding (acts like a bias)
-        x = x + x_cls.clone()
-        x = self.act(self.fc1(x))
-        x = self.act_dropout(x)
-        x = self.fc2(x)
-        # Add to original input embedding
-        x = x + residual
+        # attn (query, key, value, key mask)
+        attn_out = self.attn(x_cls, x, x, key_padding_mask=src_key_padding_mask)[0]
+        print(f'attn_out {attn_out.shape}: {attn_out}')
+        attn_res_out = x_cls + attn_out
+        norm1_out = self.norm1(self.dropout1(attn_res_out))
+        ffnn_out = self.ffnn(norm1_out)
+        ffnn_res_out = ffnn_out + norm1_out
+        norm2_out = self.norm2(self.dropout2(ffnn_res_out))
+        
+        # Added to shower hits
+        x = x + norm2_out
+        x = self.norm2(x)
+        ffnn_out = self.ffnn(x)
+        x = x + self.dropout2(ffnn_out)
+        x = self.norm2(x)
         return x
 
 class EncoderBlock(nn.Module):
@@ -100,39 +109,19 @@ class EncoderBlock(nn.Module):
             nn.Linear(hidden_dim, embed_dim)
         )
         self.norm1 = nn.LayerNorm(embed_dim)
-        #self.norm1 = AdaptiveBatchNorm2d(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
-        #self.norm2 = AdaptiveBatchNorm2d(embed_dim)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x, src_key_padding_mask=None):
-        '''_src = self.attn(src, src, src, key_padding_mask=src_key_padding_mask)[0]
-        _src = self.dropout1(_src)
-        src = src + _src.clone()
-        src = self.norm1( src )
-        _src = self.ffnn(src)
-        _src = self.dropout2(_src)
-        src = src + _src.clone()
-        src = self.norm2( src )'''
-        
-        #x2 = self.norm1(x)
+
         attn_out = self.attn(x, x, x, key_padding_mask=src_key_padding_mask)[0]
+
         x = x + self.dropout1(attn_out)
         x = self.norm2(x)
         ffnn_out = self.ffnn(x)
         x = x + self.dropout2(ffnn_out)
         x = self.norm2(x)
-
-        # Attention section
-        #attn_out = self.attn(x, x, x, key_padding_mask=src_key_padding_mask)[0]
-        #x = x + self.dropout1(attn_out)
-        #x = self.norm1(x)
-
-        # Fully-connected section
-        #ffnn_out = self.ffnn(x)
-        #x = x + self.dropout1(ffnn_out)
-        #x = self.norm2(x)
 
         return x
 
@@ -158,18 +147,18 @@ class Gen(nn.Module):
         # Module list of encoder blocks
         self.encoder = nn.ModuleList(
             [
-                #Block(
-                #    embed_dim=embed_dim,
-                #    num_heads=num_attn_heads,
-                #    hidden=hidden_dim,
-                #    dropout=dropout_gen,
-                #)
-                EncoderBlock(
+                Block(
                     embed_dim=embed_dim,
-                    n_heads=num_attn_heads,
-                    dropout=dropout_gen,
+                    num_heads=num_attn_heads,
                     hidden_dim=hidden_dim,
+                    dropout=dropout_gen,
                 )
+                #EncoderBlock(
+                #    embed_dim=embed_dim,
+                #    n_heads=num_attn_heads,
+                #    dropout=dropout_gen,
+                #    hidden_dim=hidden_dim,
+                #)
                 for i in range(num_encoder_blocks)
             ]
         )
@@ -192,16 +181,16 @@ class Gen(nn.Module):
         embed_e_ = self.embed_t(e)
         embed_e_ = self.act_sig(embed_e_)
         # 'class' token (mean field)
-        #x_cls = self.cls_token.expand(x.size(0), 1, -1)
-
+        x_cls = self.cls_token.expand(x.size(0), 1, -1)
+        
         # Feed input embeddings into encoder block
         for layer in self.encoder:
             # Match dimensions and append to input
             x += self.dense1(embed_t_).clone()
             x += self.dense1(embed_e_).clone()
             # Each encoder block takes previous blocks output as input
-            #x = layer(x, x_cls, mask) # Block layers 
-            x = layer(x, mask) # EncoderBlock layers
+            x = layer(x, x_cls, mask) # Block layers 
+            #x = layer(x, mask) # EncoderBlock layers
         
         # Rescale models output (helps capture the normalisation of the true scores)
         mean_ , std_ = self.marginal_prob_std(x,t)
@@ -225,13 +214,11 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     # Generate padding mask for padded entries
     # Positions with True are ignored while False values will be unchanged
     padding_mask = (x[:,:,0] == 0).type(torch.bool)
-    #padding_mask = (x[:,:,0] <= 1).type(torch.bool)
     
     # Inverse mask to ignore for when 0-padded hits should be ignored
-    output_mask = (x[:,:,0] != 0).type(torch.int)
-    #output_mask = (x[:,:,0] > 1).type(torch.int)
-    output_mask = output_mask.unsqueeze(-1)
-    output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
+    #output_mask = (x[:,:,0] != 0).type(torch.int)
+    #output_mask = output_mask.unsqueeze(-1)
+    #output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
     
     # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
@@ -248,12 +235,15 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
 
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
     scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
+    #scores = model(perturbed_x, random_t, incident_energies)
+    
+    # Check if scores have meaningful value for padded entries
+    # What does the attention mechanism return for padded entries?
+    # Should we keep them in the loss calculation?
+    print(f'scores {scores.shape}: {scores}')
     
     # Calculate loss 
     losses = torch.square(scores*std_[:,None,None] + z)
-
-    # Zero losses calculated over padded inputs
-    losses = losses
     
     # Losses across all hits and 4-vectors (normalise by number of hits)
     losses = torch.mean( losses, dim=(1,2))
@@ -337,13 +327,11 @@ class pc_sampler:
 
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
-        #padding_mask = (init_x[:,:,0] <= 1).type(torch.bool)
 
         # Inverse mask to ignore models output for 0-padded hits in loss
-        output_mask = (init_x[:,:,0]!= self.padding_value).type(torch.int)
-        #output_mask = (init_x[:,:,0] > 1).type(torch.int)
-        output_mask = output_mask.unsqueeze(-1)
-        output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
+        #output_mask = (init_x[:,:,0]!= self.padding_value).type(torch.int)
+        #output_mask = output_mask.unsqueeze(-1)
+        #output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
         
         # Establish time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
@@ -386,7 +374,7 @@ class pc_sampler:
                 
                 # Conditional score prediction gives estimate of noise to remove
                 grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
-                # Multiply by mask so we don't add noise to padded values / use gradients for padding in loss
+                #grad = score_model(x, batch_time_step, sampled_energies)
                 
                 nc_steps = 1
                 for n_ in range(nc_steps):
@@ -406,6 +394,7 @@ class pc_sampler:
                 # Adjust inputs according to scores
                 drift, diff = diffusion_coeff(x,batch_time_step)
                 drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
+                #drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies)
                 x_mean = x - drift*step_size
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
                 
@@ -672,14 +661,14 @@ def main():
     
     padding_value = 0.0
     ### HYPERPARAMETERS ###
-    train_ratio = 0.8
+    train_ratio = 0.9
     batch_size = 128
-    lr = 0.0001
+    lr = 0.001
     n_epochs = 500
     ### SDE PARAMETERS ###
     SDE = 'VP'
     if SDE == 'VP':
-        sigma_max = 50.0
+        sigma_max = 20.0
         sigma_min = 0.1
     if SDE == 'VE':
         sigma_max = 20.0
@@ -688,7 +677,7 @@ def main():
     n_feat_dim = 4
     embed_dim = 512
     hidden_dim = 128
-    num_encoder_blocks = 3
+    num_encoder_blocks = 8
     num_attn_heads = 16
     dropout_gen = 0
     # SAMPLER PARAMETERS
@@ -727,8 +716,9 @@ def main():
     training_file_path = os.path.join('/eos/user/j/jthomasw/tdsm_encoder/datasets/', indir)
     files_list_ = []
     print(f'Training files found in: {training_file_path}')
+    
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'dataset_1_photons_padded*.pt'):
+        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry424To564*.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
@@ -747,43 +737,6 @@ def main():
         all_hit_ine_trans = dists_trans[7]
         average_x_shower_trans = dists_trans[8]
         average_y_shower_trans = dists_trans[9]
-
-        '''
-        # Non-transformed variables
-        dists = util.display.plot_distribution(files_list_, nshowers_2_plot=n_showers_2_gen, padding_value=padding_value, energy_trans_file='transform_e.pkl', x_trans_file='transform_x.pkl', y_trans_file='transform_y.pkl', ine_trans_file='rescaler_y.pkl')
-        entries = dists[0]
-        all_incident_e = dists[1]
-        total_deposited_e_shower = dists[2]
-        all_e = dists[3]
-        all_x = dists[4]
-        all_y = dists[5]
-        all_z = dists[6]
-        all_hit_ine = dists[7]
-        average_x_shower = dists[8]
-        average_y_shower = dists[9]
-
-        ### 2D scatter plots
-        
-        print('Plot individual X vs. individual hit energy')
-        distributions = [(('X', 'Hit energy [GeV]', 'Incident energy [GeV]') , (all_x, all_e, all_hit_ine, all_x_trans, all_e_trans, all_hit_ine_trans))]
-        util.display.make_plot(distributions,training_file_path)
-
-        print('Plot incident vs. individual hit energy')
-        distributions = [(('Incident energy [GeV]', 'Hit energy [GeV]', 'Incident energy [GeV]') , (all_hit_ine, all_e, all_hit_ine, all_hit_ine_trans, all_e_trans, all_hit_ine_trans))]
-        util.display.make_plot(distributions,training_file_path)
-
-        print('Plot average X vs. avergaeY')
-        distributions = [(('Av. X Position', 'Av. Y Position', 'Incident energy [GeV]') , (average_x_shower, average_y_shower, all_incident_e, average_x_shower_trans, average_y_shower_trans, all_incident_e_trans))]
-        util.display.make_plot(distributions,training_file_path)
-
-        print('Plot average X vs. average hit energy')
-        distributions = [(('Av. X Position', 'Av. Energy Deposited [GeV]', 'Incident energy [GeV]') , (average_x_shower, total_deposited_e_shower, all_incident_e, average_x_shower_trans, total_deposited_e_shower_trans, all_incident_e_trans))]
-        util.display.make_plot(distributions,training_file_path)
-
-        print('Plot incident vs. average hit energy')
-        distributions = [(('Incident energy [GeV]', 'Av. Energy Deposited [GeV]', 'Incident energy [GeV]') , (all_incident_e, total_deposited_e_shower, all_incident_e, all_incident_e_trans, total_deposited_e_shower_trans, all_incident_e_trans))]
-        util.display.make_plot(distributions,training_file_path)
-        '''
 
         ### 1D histograms
         fig, ax = plt.subplots(3,3, figsize=(12,12))
@@ -880,6 +833,8 @@ def main():
 
         # Optimiser needs to know model parameters for to optimise
         optimiser = RAdam(model.parameters(),lr=lr)
+        #optimiser = RAdam(model.parameters(),lr=initial_lr)
+        scheduler = lr_scheduler.ExponentialLR(optimiser, gamma=0.99)
         
         av_training_losses_per_epoch = []
         av_testing_losses_per_epoch = []
@@ -972,7 +927,8 @@ def main():
                 plt.legend(loc='upper right')
                 plt.tight_layout()
                 fig.savefig(output_directory+'loss_v_epoch.png')
-        
+            scheduler.step()
+            
         torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
         print('Training losses : ', av_training_losses_per_epoch)
         print('Testing losses : ', av_testing_losses_per_epoch)
