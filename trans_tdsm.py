@@ -77,13 +77,15 @@ class Block(nn.Module):
     def forward(self,x,x_cls,src_key_padding_mask=None,):
         #residual = x.clone()
         
-        print(f'x {x.shape}: {x}')
-        print(f'x_cls {x_cls.shape}: {x_cls}')
+        #print(f'x {x.shape}: {x}')
+        #print(f'x_cls {x_cls.shape}: {x_cls}')
+        
         # Mean-field attention
         # Multiheaded self-attention but replacing query with a single mean field approximator
         # attn (query, key, value, key mask)
         attn_out = self.attn(x_cls, x, x, key_padding_mask=src_key_padding_mask)[0]
-        print(f'attn_out {attn_out.shape}: {attn_out}')
+        #print(f'attn_out {attn_out.shape}: {attn_out}')
+        
         attn_res_out = x_cls + attn_out
         norm1_out = self.norm1(self.dropout1(attn_res_out))
         ffnn_out = self.ffnn(norm1_out)
@@ -240,7 +242,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     # Check if scores have meaningful value for padded entries
     # What does the attention mechanism return for padded entries?
     # Should we keep them in the loss calculation?
-    print(f'scores {scores.shape}: {scores}')
+    #print(f'scores {scores.shape}: {scores}')
     
     # Calculate loss 
     losses = torch.square(scores*std_[:,None,None] + z)
