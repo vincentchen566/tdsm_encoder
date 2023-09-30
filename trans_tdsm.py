@@ -666,7 +666,7 @@ def main():
     train_ratio = 0.9
     batch_size = 128
     lr = 0.001
-    n_epochs = 500
+    n_epochs = 1000
     ### SDE PARAMETERS ###
     SDE = 'VP'
     if SDE == 'VP':
