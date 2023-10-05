@@ -13,7 +13,46 @@ from pickle import load
 from matplotlib import cm
 sys.path.insert(1, '../')
 
-def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot=100, padding_value=0.0, batch_size=1, energy_trans_file='', x_trans_file='', y_trans_file='', ine_trans_file=''):
+def invert_transform_e(e_):
+    original_e = 0.5 * np.log( (1+np.array(e_)) / (1-np.array(e_)) )
+    original_e = np.nan_to_num(original_e)
+    original_e = np.reshape(original_e,(-1,))
+    return original_e
+
+
+def plot_loss_vs_epoch(eps_, train_losses, test_losses, odir='', zoom=False):
+    
+    fig_, ax_ = plt.subplots(ncols=1, figsize=(4,4))
+    
+    if zoom==True:
+        # Only plot the last 80% of the epochs
+        ax_.set_title('zoom')
+        zoom_split = int(len(train_losses) * 0.8)
+    else:
+        ax_.set_title('Loss vs. epoch')
+        zoom_split = 0
+        
+    ax_.set_ylabel('Loss')
+    ax_.set_xlabel('Epoch')
+    ax_.set_yscale('log')
+    eps_zoom = eps_[zoom_split:]
+    train_loss_zoom = train_losses[zoom_split:]
+    test_loss_zoom = test_losses[zoom_split:]
+    ax_.plot(eps_zoom,train_loss_zoom, c='blue', label='training')
+    ax_.plot(eps_zoom,test_loss_zoom, c='red', label='testing')
+    ax_.legend(loc='upper right')
+    
+    if zoom==True:
+        z = np.polyfit(eps_zoom, train_loss_zoom, 1)
+        trend = np.poly1d(z)
+        ax_.plot(eps_zoom,trend(eps_zoom), c='black', label='trend')
+        fig_.savefig(odir+'loss_v_epoch_zoom.png')
+    else:
+        fig_.savefig(odir+'loss_v_epoch.png')
+    
+    return
+
+def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot=100, padding_value=0.0, batch_size=1, energy_trans=False):
     
     '''
     files_ = can be a list of input files or a cloud dataset object
@@ -40,26 +79,6 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
     print(f'# showers to plot: {nshowers_2_plot}')
     if type(files_) == list:
         print(f'plot_distribution running on input type \'files\'')
-        if energy_trans_file != '':
-            energy_trans_file = os.path.join(files_[0].rsplit('/',1)[0],energy_trans_file)
-            print(f'Loading file for hit e transformation inversion: {energy_trans_file}')
-            # Load saved pre-processor
-            scalar_e = load(open(energy_trans_file, 'rb'))
-        if x_trans_file != '':
-            x_trans_file = os.path.join(files_[0].rsplit('/',1)[0],x_trans_file)
-            print(f'Loading file for hit x transformation inversion: {x_trans_file}')
-            # Load saved pre-processor
-            scalar_x = load(open(x_trans_file, 'rb'))
-        if y_trans_file != '':
-            y_trans_file = os.path.join(files_[0].rsplit('/',1)[0],y_trans_file)
-            print(f'Loading file for hit y transformation inversion: {y_trans_file}')
-            # Load saved pre-processor
-            scalar_y = load(open(y_trans_file, 'rb'))
-        if ine_trans_file != '':
-            ine_trans_file = os.path.join(files_[0].rsplit('/',1)[0],ine_trans_file)
-            print(f'Loading file for incident e transformation inversion: {ine_trans_file}')
-            # Load saved pre-processor
-            scalar_ine = load(open(ine_trans_file, 'rb'))
         
         # Using several files so want to take even # samples from each file for plots
         n_files = len(files_)
@@ -89,9 +108,6 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 mask = ~(data_np[:,:,0] == 0)
                 
                 incident_energies = np.array(incident_energies).reshape(-1,1)
-                if ine_trans_file != '':
-                    # Rescale the conditional input for each shower
-                    incident_energies = scalar_ine.inverse_transform(incident_energies)
                 incident_energies = incident_energies.flatten().tolist()
                 
                 # For each shower in batch
@@ -107,12 +123,6 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     all_e = np.array(valid_hits[:,0]).reshape(-1,1)
                     all_x = np.array(valid_hits[:,1]).reshape(-1,1)
                     all_y = np.array(valid_hits[:,2]).reshape(-1,1)
-                    if energy_trans_file != '':
-                        all_e = scalar_e.inverse_transform(all_e)
-                    if x_trans_file != '':
-                        all_x = scalar_x.inverse_transform(all_x)
-                    if y_trans_file != '':
-                        all_y = scalar_y.inverse_transform(all_y)
                     
                     all_e = all_e.flatten().tolist()
                     all_x = all_x.flatten().tolist()
@@ -140,12 +150,9 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     
     elif type(files_) == utils.cloud_dataset:
         print(f'plot_distribution running on input type \'cloud_dataset\'')
-        # Note: Shuffling can be turned off if you want to see exactly the same showers before and after transformation
+        
+        # Note: Shuffling can be turned off if you want to see specific showers
         point_clouds_loader = DataLoader(files_, batch_size=batch_size, shuffle=True)
-        if energy_trans_file != '':
-            # Load saved pre-processor
-            print(f'Loading file for transformation inversion: {energy_trans_file}')
-            scalar_e = load(open(energy_trans_file, 'rb'))
 
         for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
             valid_hits = []
@@ -166,10 +173,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 all_e = np.array(valid_hits[:,0]).reshape(-1,1)
                 all_x = np.array(valid_hits[:,1]).reshape(-1,1)
                 all_y = np.array(valid_hits[:,2]).reshape(-1,1)
-                if energy_trans_file != '':
-                    all_e = scalar_e.inverse_transform(all_e)
-                    all_x = scalar_x.inverse_transform(all_x)
-                    all_y = scalar_y.inverse_transform(all_y)
+                    
                 all_e = all_e.flatten().tolist()
                 all_x = all_x.flatten().tolist()
                 all_y = all_y.flatten().tolist()
@@ -199,30 +203,34 @@ def perturbation_1D(distributions, outdir='./'):
     xlabel = distributions[0][0]
     p0, p1, p2, p3, p4, p5 = distributions[0][1]
     
-    fig, axs_1 = plt.subplots(1,5, figsize=(24,8), sharex=True, sharey=True)
-    #bins=np.histogram(np.hstack((p0,p1)), bins=50)[1]
-    bins = np.linspace(0., 1., num=25)
+    #fig, axs_1 = plt.subplots(1,5, figsize=(24,8), sharex=True, sharey=True)
+    fig, axs_1 = plt.subplots(1,5, figsize=(24,8), sharey=True)
+    bins=np.histogram(np.hstack((p0,p1)), bins=25)[1]
     axs_1[0].set_xlabel(xlabel)
     axs_1[0].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[0].hist(p1, bins, alpha=0.5, color='red', label='perturbed')
     axs_1[0].set_yscale('log')
     axs_1[0].legend(loc='upper right')
-
+    
+    bins=np.histogram(np.hstack((p0,p2)), bins=25)[1]
     axs_1[1].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[1].hist(p2, bins, alpha=0.5, color='red', label='perturbed')
     axs_1[1].set_yscale('log')
     axs_1[1].legend(loc='upper right')
-
+    
+    bins=np.histogram(np.hstack((p0,p3)), bins=25)[1]
     axs_1[2].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[2].hist(p3, bins, alpha=0.5, color='red', label='perturbed')
     axs_1[2].set_yscale('log')
     axs_1[2].legend(loc='upper right')
 
+    bins=np.histogram(np.hstack((p0,p4)), bins=25)[1]
     axs_1[3].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[3].hist(p4, bins, alpha=0.5, color='red', label='perturbed')
     axs_1[3].set_yscale('log')
     axs_1[3].legend(loc='upper right')
     
+    bins=np.histogram(np.hstack((p0,p5)), bins=25)[1]
     axs_1[4].hist(p0, bins, alpha=0.5, color='orange', label='un-perturbed')
     axs_1[4].hist(p5, bins, alpha=0.5, color='red', label='perturbed')
     axs_1[4].set_yscale('log')
@@ -484,8 +492,8 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    #x_lim = ( min(min(gen_x_t25),min(geant_x)) , max(max(gen_x_t25),max(geant_x)) )
-    #y_lim = ( min(min(gen_y_t25),min(geant_y)) , max(max(gen_y_t25),max(geant_y)) )
+    x_lim = ( min(min(gen_x_t25),min(geant_x)) , max(max(gen_x_t25),max(geant_x)) )
+    y_lim = ( min(min(gen_y_t25),min(geant_y)) , max(max(gen_y_t25),max(geant_y)) )
     plot_diffusion_xy(
         axarr[1],
         gen_x_t25,
@@ -500,8 +508,8 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    #x_lim = ( min(min(gen_x_t50),min(geant_x)) , max(max(gen_x_t50),max(geant_x)) )
-    #y_lim = ( min(min(gen_y_t50),min(geant_y)) , max(max(gen_y_t50),max(geant_y)) )
+    x_lim = ( min(min(gen_x_t50),min(geant_x)) , max(max(gen_x_t50),max(geant_x)) )
+    y_lim = ( min(min(gen_y_t50),min(geant_y)) , max(max(gen_y_t50),max(geant_y)) )
     plot_diffusion_xy(
         axarr[2],
         gen_x_t50,
@@ -516,8 +524,8 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    #x_lim = ( min(min(gen_x_t75),min(geant_x)) , max(max(gen_x_t75),max(geant_x)) )
-    #y_lim = ( min(min(gen_y_t75),min(geant_y)) , max(max(gen_y_t75),max(geant_y)) )
+    x_lim = ( min(min(gen_x_t75),min(geant_x)) , max(max(gen_x_t75),max(geant_x)) )
+    y_lim = ( min(min(gen_y_t75),min(geant_y)) , max(max(gen_y_t75),max(geant_y)) )
     plot_diffusion_xy(
         axarr[3],
         gen_x_t75,
@@ -532,8 +540,8 @@ def make_diffusion_plot(distributions, outdir=''):
         ylim=y_lim
     )
     
-    #x_lim = ( min(min(gen_x_t99),min(geant_x)) , max(max(gen_x_t99),max(geant_x)) )
-    #y_lim = ( min(min(gen_y_t99),min(geant_y)) , max(max(gen_y_t99),max(geant_y)) )
+    x_lim = ( min(min(gen_x_t99),min(geant_x)) , max(max(gen_x_t99),max(geant_x)) )
+    y_lim = ( min(min(gen_y_t99),min(geant_y)) , max(max(gen_y_t99),max(geant_y)) )
     plot_diffusion_xy(
         axarr[4],
         gen_x_t99,
