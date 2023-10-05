@@ -77,14 +77,10 @@ class Block(nn.Module):
     def forward(self,x,x_cls,src_key_padding_mask=None,):
         #residual = x.clone()
         
-        #print(f'x {x.shape}: {x}')
-        #print(f'x_cls {x_cls.shape}: {x_cls}')
-        
         # Mean-field attention
         # Multiheaded self-attention but replacing query with a single mean field approximator
         # attn (query, key, value, key mask)
         attn_out = self.attn(x_cls, x, x, key_padding_mask=src_key_padding_mask)[0]
-        #print(f'attn_out {attn_out.shape}: {attn_out}')
         
         attn_res_out = x_cls + attn_out
         norm1_out = self.norm1(self.dropout1(attn_res_out))
@@ -175,6 +171,13 @@ class Gen(nn.Module):
         self.marginal_prob_std = marginal_prob_std
 
     def forward(self, x, t, e, mask=None):
+        '''
+        x = input data
+        t = noise
+        e = conditional variable
+        mask = padding mask for attention mechanism with 'True' indicating the corresponding key value will be ignored when calculating the attention.
+        '''
+        
         # Embed 4-vector input 
         x = self.embed(x)
         # Embed 'time' condition
@@ -217,15 +220,11 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     # Positions with True are ignored while False values will be unchanged
     padding_mask = (x[:,:,0] == 0).type(torch.bool)
     
-    # Inverse mask to ignore for when 0-padded hits should be ignored
-    #output_mask = (x[:,:,0] != 0).type(torch.int)
-    #output_mask = output_mask.unsqueeze(-1)
-    #output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
-    
     # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
     
-    # Noise input multiplied by mask so we don't go perturbing zero padded values to have some non-sentinel value
+    # Noise input 
+    # Multiplied by mask so we don't go perturbing zero padded values
     z = torch.normal(0,1,size=x.shape, device=device)
     z = z.to(device)
     
@@ -329,11 +328,6 @@ class pc_sampler:
 
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
-
-        # Inverse mask to ignore models output for 0-padded hits in loss
-        #output_mask = (init_x[:,:,0]!= self.padding_value).type(torch.int)
-        #output_mask = output_mask.unsqueeze(-1)
-        #output_mask = output_mask.expand(output_mask.size()[0], output_mask.size()[1],4)
         
         # Establish time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
@@ -344,6 +338,7 @@ class pc_sampler:
         
         # Input shower is just some noise * std from SDE
         x = init_x
+        
         diffusion_step_ = 0
         with torch.no_grad():
             # Load saved pre-processor
@@ -376,7 +371,6 @@ class pc_sampler:
                 
                 # Conditional score prediction gives estimate of noise to remove
                 grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
-                #grad = score_model(x, batch_time_step, sampled_energies)
                 
                 nc_steps = 1
                 for n_ in range(nc_steps):
@@ -396,7 +390,6 @@ class pc_sampler:
                 # Adjust inputs according to scores
                 drift, diff = diffusion_coeff(x,batch_time_step)
                 drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
-                #drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies)
                 x_mean = x - drift*step_size
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
                 
@@ -840,7 +833,10 @@ def main():
         
         av_training_losses_per_epoch = []
         av_testing_losses_per_epoch = []
+        
+        eps_ = []
         for epoch in range(0,n_epochs):
+            eps_.append(epoch)
             print(f"epoch: {epoch}")
             # Create/clear per epoch variables
             cumulative_epoch_loss = 0.
@@ -934,16 +930,10 @@ def main():
         torch.save(model.state_dict(), output_directory+'ckpt_tmp_'+str(epoch)+'.pth')
         print('Training losses : ', av_training_losses_per_epoch)
         print('Testing losses : ', av_testing_losses_per_epoch)
-        fig, ax = plt.subplots(ncols=1, figsize=(10,10))
-        plt.title('')
-        plt.ylabel('Loss')
-        plt.xlabel('Epoch')
-        plt.yscale('log')
-        plt.plot(av_training_losses_per_epoch, label='training')
-        plt.plot(av_testing_losses_per_epoch, label='testing')
-        plt.legend(loc='upper right')
-        plt.tight_layout()
-        fig.savefig(output_directory+'loss_v_epoch.png')
+        
+        # Only plot the last 80% of the epochs
+        util.display.plot_loss_vs_epoch(eps_, av_training_losses_per_epoch, av_testing_losses_per_epoch, odir=output_directory)
+        util.display.plot_loss_vs_epoch(eps_, av_training_losses_per_epoch, av_testing_losses_per_epoch, odir=output_directory, zoom=True)
     
     #### Sampling ####
     if switches_>>2 & trigger:    
