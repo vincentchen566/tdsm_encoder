@@ -9,69 +9,26 @@ from pickle import dump
 sys.path.insert(1, '../')
 import utils, psutil
 
-# bespoke minmax function
-class minmax():
+# tanh with enhanced gradient for hit energy transformation
+def transform_hit_e(hit_energies):
+    new_e = 2/(1+np.exp(-10*hit_energies)) - 1
+    new_e = np.nan_to_num(new_e)
+    new_e = np.reshape(new_e,(-1,))
+    return new_e
 
-    def __init__(self, indir=''):
-        self.indir = indir
-        self.min_e = 1000
-        self.max_e = 0
-        self.min_x = 1000
-        self.max_x = 0
-        self.min_y = 1000
-        self.max_y = 0
-        self.GeV = 1/1000
+# Sigmoid with reduced gradient for hit positions transformation
+def transform_hit_pos(hit_pos):
+    new_pos = 1/(1+np.exp(-0.1*hit_pos))
+    new_pos = np.nan_to_num(new_pos)
+    new_pos = np.reshape(new_pos,(-1,))
+    return new_pos
 
-    def get_minmax(self):
-        # We want to fit a transformation function for the distribution of showers from all files
-        for infile in os.listdir(self.indir):
-            # Using a minmax function we need to ensure we get the max and min value of the entire dataset
-            if fnmatch.fnmatch(infile, 'dataset_1_photons_tensor_no_pedding_euclidian_nentry*.pt'):
-                filename = os.path.join(self.indir,infile)
-                print(f'check filename: {filename} for minmax')
-                loaded_file = torch.load(filename)
-                
-                for shower in loaded_file[0]:
-                    sorted_e = sorted(set(shower[:,0]* self.GeV))
-                    sorted_x = sorted(set(shower[:,1]))
-                    sorted_y = sorted(set(shower[:,2]))
-                    if sorted_e[0] < self.min_e:
-                        self.min_e = sorted_e[0].item()
-                    if sorted_e[-1] > self.max_e:
-                        self.max_e = sorted_e[-1].item()
-                    if sorted_x[0] < self.min_x:
-                        self.min_x = sorted_x[0].item()
-                    if sorted_x[-1] > self.max_x:
-                        self.max_x = sorted_x[-1].item()
-                    if sorted_y[0] < self.min_y:
-                        self.min_y = sorted_y[0].item()
-                    if sorted_y[-1] > self.max_y:
-                        self.max_y = sorted_y[-1].item()
-    
-        print(f'Final min e: {self.min_e}, max: {self.max_e}')
-        print(f'Final min x: {self.min_x}, max: {self.max_x}')
-        print(f'Final min y: {self.min_y}, max: {self.max_y}')
-        return
-    
-    def transform_e(self, E, range_min, range_max):
-        E_std = (E - self.min_e) / (self.max_e - self.min_e)
-        E_scaled = E_std * (range_max - range_min) + range_min
-        return E_scaled
-    
-    def invert_transform_e(self, E_scaled, range_min, range_max):
-        E_std = (E_scaled - range_min) / (range_max - range_min)
-        E = E_std * (self.max_e - self.min_e) +  self.min_e
-        return E
-    
-    def transform_x(self, X, range_min, range_max):
-        X_std = (X - self.min_x) / (self.max_x - self.min_x)
-        X_scaled = X_std * (range_max - range_min) + range_min
-        return X_scaled
-    
-    def transform_y(self, Y, range_min, range_max):
-        Y_std = (Y - self.min_y) / (self.max_y - self.min_y)
-        Y_scaled = Y_std * (range_max - range_min) + range_min
-        return Y_scaled
+# Min-max incident energy transformation
+def transform_incident_energy(ine_):
+    maxe_ = np.max(ine_)
+    mine_ = np.min(ine_)
+    new_ine = (ine_ - mine_) / (maxe_ - mine_)
+    return new_ine
 
 def main():
     usage=''
@@ -89,11 +46,6 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('Device: ', device)
     
-    # Instantiate transform object and get minmax values
-    #trans_ = minmax(indir=indir)
-    #trans_.get_minmax()
-    
-    
     # Fit the transformation functions before adding any padding to the dataset
     E_ = []
     X_ = []
@@ -104,74 +56,10 @@ def main():
     min_e = 10
     max_e_subset = 0
     max_e = 0
-
-    # We want to fit a transformation function for the distribution of showers from all files
-    for infile in os.listdir(indir):
-        if fnmatch.fnmatch(infile, 'dataset_1_photons_tensor_no_pedding_euclidian_nentry*.pt'):
-            filename = os.path.join(indir,infile)
-            print(f'Add filename: {filename} to list for fit')
-            loaded_file = torch.load(filename)
-            all_files_inenergy = torch.cat([all_files_inenergy,loaded_file[1]*GeV])
-            print(f'# showers {type(loaded_file[0])}: {len(loaded_file[0])}')
-            every_n_files = len(loaded_file[0])//1000
-            print(f'sample every {every_n_files} showers')
-            nshowers = 0
-            for shower in loaded_file[0]:
-                
-                if nshowers % every_n_files == 0:
-                    
-                    # Sort the showers to see the max and min values (warning, there are outliers)
-                    sorted_shower = sorted(set(shower[:,0]))
-                    if sorted_shower[0] < min_e:
-                        min_e = sorted_shower[0]
-                    if sorted_shower[-1] > max_e:
-                        max_e = sorted_shower[-1]
-
-                    # Only using some of the showers to fit pre-processing transformation function
-                    if sorted_shower[0] < min_e_subset:
-                        min_e_subset = sorted_shower[0]
-                    if sorted_shower[-1] > max_e_subset:
-                        max_e_subset = sorted_shower[-1]
-                    E_.extend( shower[:,0]*GeV )
-                    X_.extend( shower[:,1] )
-                    Y_.extend( shower[:,2] )
-                    Z_.extend( shower[:,3] )
-
-                nshowers+=1
-            
-            process = psutil.Process(os.getpid())
-            print('Memory usage of current process 0 [GB]: ', process.memory_info().rss/(1024 * 1024 * 1024))
-
-    print(f'min_e_subset: {min_e_subset}')
-    print(f'min_e: {min_e}')
-    print(f'max_e_subset: {max_e_subset}')
-    print(f'max_e: {max_e}')
-
-    E_ = np.array(E_).reshape(-1, 1)
-    X_ = np.array(X_).reshape(-1, 1)
-    Y_ = np.array(Y_).reshape(-1, 1)
-    Z_ = np.array(Z_).reshape(-1, 1)
-    all_files_inenergy = torch.reshape(all_files_inenergy, (-1,1))
     
-    # Fit the transformation functions
-    if transform == 1:
-        print(f'Fitting transformation function for hit energies')
-        #transform_e = MinMaxScaler(feature_range=(1,2)).fit(E_)
-        transform_e = QuantileTransformer(output_distribution="uniform").fit(E_)
-        print(f'Fitting transformation function for hit X')
-        #transform_x = MinMaxScaler(feature_range=(1,2)).fit(X_)
-        transform_x = QuantileTransformer(output_distribution="uniform").fit(X_)
-        print(f'Fitting transformation function for hit Y')
-        #transform_y = MinMaxScaler(feature_range=(1,2)).fit(Y_)
-        transform_y = QuantileTransformer(output_distribution="uniform").fit(Y_)
-        print(f'Fitting transformation function for incident energies')
-        #rescaler_y = MinMaxScaler(feature_range=(1,2)).fit(all_files_inenergy)
-        rescaler_y = QuantileTransformer(output_distribution="uniform").fit(all_files_inenergy)
-    
-
     # For each file
     for infile in os.listdir(indir):
-        if fnmatch.fnmatch(infile, 'dataset_1_photons_tensor_no_pedding_euclidian_nentry*.pt'):
+        if fnmatch.fnmatch(infile, 'dataset_2_tensor_no_pedding_euclidian_nentry*.pt'):
             filename = os.path.join(indir,infile)
             ofile = infile.replace("tensor_no_pedding_euclidian", "padded" )
             opath = '/eos/user/j/jthomasw/tdsm_encoder/datasets/'
@@ -199,10 +87,9 @@ def main():
             
             # Transform the incident energies
             incident_energies = np.asarray( incident_energies ).reshape(-1, 1)
-            if transform == 1:
-                # Rescale the conditional input for each shower
-                incident_energies = rescaler_y.transform(incident_energies)
+            incident_energies = transform_incident_energy(incident_energies)
             incident_energies = torch.from_numpy( incident_energies.flatten() )
+            print(f'incident_energies:{incident_energies}')
             
             # Rescale hit energy and position and do padding
             shower_count = 0
@@ -221,15 +108,12 @@ def main():
                 X_ = np.asarray(showers[:,1]).reshape(-1, 1)
                 Y_ = np.asarray(showers[:,2]).reshape(-1, 1)
                 Z_ = np.asarray(showers[:,3]).reshape(-1, 1)
+                    
                 if transform == 1:
-
-                    #E_ = trans_.transform_e(E_, 1, 2)
-                    #X_ = trans_.transform_x(X_, 1, 2)
-                    #Y_ = trans_.transform_y(Y_, 1, 2)
-                    E_ = transform_e.transform(E_)+1
-                    X_ = transform_x.transform(X_)+1
-                    Y_ = transform_y.transform(Y_)+1
-                    Z_ = Z_+1
+                    E_ = transform_hit_e(E_)
+                    X_ = transform_hit_pos(X_)
+                    Y_ = transform_hit_pos(Y_)
+                    Z_ = transform_hit_pos(Z_)
                     
                 E_ = torch.from_numpy( E_.flatten() )
                 X_ = torch.from_numpy( X_.flatten() )
@@ -243,35 +127,13 @@ def main():
                 # normal padding
                 padded_showers.append(padded_shower)
                 
-                # Smear padded data with values == 0
-                # Be careful to ensure that valid data doesn't have values == 0
-                # May need to cap the values to ensure padded values not smeared into valid distribution?
-                #noise = torch.normal(0,0.2,size=padded_shower.shape)
-                #noise = torch.rand(padded_shower.shape)
-                #mask_valid = (padded_shower[:,:] == 0).type(torch.int)
-                #noise = noise*mask_valid
-                #tmp = noise.clone()
-                #tmp[noise==0]=1
-                #new_padded_shower = padded_shower.clone()
-                #new_padded_shower[padded_shower==0]=1
-                #new_padded_shower = new_padded_shower*tmp
-                #padded_showers.append(new_padded_shower)
-                
                 shower_count+=1
              
             torch.save([padded_showers,incident_energies], outfilename)
-            
 
             ############
             # Check the transformation and padding by making some plots
             ############
-
-            # Need to save transformation functions if we want to invert the same transformation later
-            if transform == 1:
-                dump(rescaler_y, open( os.path.join(odir,'rescaler_y.pkl') , 'wb'))
-                dump(transform_e, open( os.path.join(odir,'transform_e.pkl') , 'wb'))
-                dump(transform_x, open(os.path.join(odir,'transform_x.pkl') , 'wb'))
-                dump(transform_y, open(os.path.join(odir,'transform_y.pkl') , 'wb'))
             
             padded_loaded_file = torch.load(outfilename)
             padded_showers = padded_loaded_file[0]
@@ -321,30 +183,6 @@ def main():
                 #real_hit_zs = torch.masked_select(hit_zs,mask)
                 real_hit_zs = hit_zs
                 
-                '''
-                # Invert transformation for plots in original variable space (also checks inversion works)
-                if invert_transform == 1:
-                    real_hit_energies = real_hit_energies.tolist()
-                    real_hit_energies = np.asarray(real_hit_energies).reshape(-1, 1)
-                    real_hit_energies = transform_e.inverse_transform(real_hit_energies)
-                    real_hit_energies = torch.from_numpy( real_hit_energies.flatten() )
-                    
-                    real_hit_xs = real_hit_xs.tolist()
-                    real_hit_xs = np.asarray(real_hit_xs).reshape(-1, 1)
-                    real_hit_xs = transform_x.inverse_transform(real_hit_xs)
-                    real_hit_xs = torch.from_numpy( real_hit_xs.flatten() )
-                    
-                    real_hit_ys = real_hit_ys.tolist()
-                    real_hit_ys = np.asarray(real_hit_ys).reshape(-1, 1)
-                    real_hit_ys = transform_y.inverse_transform(real_hit_ys)
-                    real_hit_ys = torch.from_numpy( real_hit_ys.flatten() )
-                    
-                    # Rescale the conditional input for each shower
-                    incident_energies = np.asarray( incident_energies ).reshape(-1, 1)
-                    incident_energies = rescaler_y.inverse_transform(incident_energies)
-                    incident_energies = torch.from_numpy( incident_energies.flatten() )
-                    '''
-                
                 real_hit_energies = real_hit_energies.tolist()
                 real_hit_xs = real_hit_xs.tolist()
                 real_hit_ys = real_hit_ys.tolist()
@@ -364,6 +202,8 @@ def main():
             plot_x = all_x
             plot_y = all_y
             plot_z = all_z
+            
+            bins = np.linspace(0,10,100)
 
             fig, ax = plt.subplots(3,3, figsize=(14,14))
             ax[0][0].set_ylabel('# entries')
@@ -373,37 +213,37 @@ def main():
 
             ax[0][1].set_ylabel('# entries')
             ax[0][1].set_xlabel('Real hit energy [GeV]')
-            ax[0][1].hist(plot_e, 50, label='Geant4')
+            ax[0][1].hist(plot_e, bins=np.linspace(0,1,15), label='Geant4')
             ax[0][1].set_yscale('log')
             ax[0][1].legend(loc='upper right')
 
             ax[0][2].set_ylabel('# entries')
             ax[0][2].set_xlabel('Real hit x')
-            ax[0][2].hist(plot_x, 50, label='Geant4')
+            ax[0][2].hist(plot_x, bins=np.linspace(0,1,15), label='Geant4')
             ax[2][0].set_yscale('log')
             ax[0][2].legend(loc='upper right')
 
             ax[1][0].set_ylabel('# entries')
             ax[1][0].set_xlabel('Real hit y')
-            ax[1][0].hist(plot_y, 50, label='Geant4')
+            ax[1][0].hist(plot_y, bins=np.linspace(0,1,15), label='Geant4')
             ax[2][0].set_yscale('log')
             ax[1][0].legend(loc='upper right')
 
             ax[1][1].set_ylabel('# entries')
             ax[1][1].set_xlabel('Real hit z')
-            ax[1][1].hist(plot_z, 50, label='Geant4')
-            ax[2][0].set_yscale('log')
+            ax[1][1].hist(plot_z, bins=np.linspace(0,1,15), label='Geant4')
+            ax[1][1].set_yscale('log')
             ax[1][1].legend(loc='upper right')
 
             ax[1][2].set_ylabel('# entries')
             ax[1][2].set_xlabel('Incident energy')
-            ax[1][2].hist(all_incident_e, 30, label='Geant4')
+            ax[1][2].hist(all_incident_e, 15, label='Geant4')
             ax[1][2].set_yscale('log')
             ax[1][2].legend(loc='upper right')
             
             ax[2][0].set_ylabel('# entries')
             ax[2][0].set_xlabel('Real hit deposited energy [GeV]')
-            ax[2][0].hist(total_shower_e, 30, label='Geant4')
+            ax[2][0].hist(total_shower_e, 15, label='Geant4')
             ax[2][0].set_yscale('log')
             ax[2][0].legend(loc='upper right')
             if invert_transform == 0:
