@@ -236,12 +236,6 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
 
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
     scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
-    #scores = model(perturbed_x, random_t, incident_energies)
-    
-    # Check if scores have meaningful value for padded entries
-    # What does the attention mechanism return for padded entries?
-    # Should we keep them in the loss calculation?
-    #print(f'scores {scores.shape}: {scores}')
     
     # Calculate loss 
     losses = torch.square(scores*std_[:,None,None] + z)
@@ -255,7 +249,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     return batch_loss
 
 class pc_sampler:
-    def __init__(self, sde, padding_value, snr=0.16, sampler_steps=100, device='cuda', eps=1e-3, jupyternotebook=False):
+    def __init__(self, sde, padding_value, snr=0.2, sampler_steps=100, steps2plot=(), device='cuda', eps=1e-3, jupyternotebook=False):
         ''' Generate samples from score based models with Predictor-Corrector method
             Args:
             score_model: A PyTorch model that represents the time-dependent score-based model.
@@ -272,64 +266,32 @@ class pc_sampler:
                 samples
         '''
         self.sde = sde
+        self.diffusion_coeff_fn = functools.partial(self.sde.sde)
         self.snr = snr
         self.padding_value = padding_value
         self.sampler_steps = sampler_steps
+        self.steps2plot = steps2plot
         self.device = device
         self.eps = eps
         self.jupyternotebook = jupyternotebook
         
-        self.hit_energies_step1 = []
-        self.hit_energies_step25 = []
-        self.hit_energies_step50 = []
-        self.hit_energies_step75 = []
-        self.hit_energies_step99 = []
-        
-        self.hit_x_step1 = []
-        self.hit_x_step25 = []
-        self.hit_x_step50 = []
-        self.hit_x_step75 = []
-        self.hit_x_step99 = []
-        
-        self.hit_y_step1 = []
-        self.hit_y_step25 = []
-        self.hit_y_step50 = []
-        self.hit_y_step75 = []
-        self.hit_y_step99 = []
-        
-        self.deposited_energy_step1 = []
-        self.deposited_energy_step25 = []
-        self.deposited_energy_step50 = []
-        self.deposited_energy_step75 = []
-        self.deposited_energy_step99 = []
-        
-        self.av_x_pos_step1 = []
-        self.av_x_pos_step25 = []
-        self.av_x_pos_step50 = []
-        self.av_x_pos_step75 = []
-        self.av_x_pos_step99 = []
-        
-        self.av_y_pos_step1 = []
-        self.av_y_pos_step25 = []
-        self.av_y_pos_step50 = []
-        self.av_y_pos_step75 = []
-        self.av_y_pos_step99 = []
-        
-        self.incident_e_step1 = []
-        self.incident_e_step25 = []
-        self.incident_e_step50 = []
-        self.incident_e_step75 = []
-        self.incident_e_step99 = []
+        # Dictionary objects  hold lists of variable values at various stages of diffusion process
+        # Used for visualisation and diagnostic purposes only
+        self.hit_energy_stages = { x:[] for x in self.steps2plot}
+        self.hit_x_stages = { x:[] for x in self.steps2plot}
+        self.hit_y_stages = { x:[] for x in self.steps2plot}
+        self.deposited_energy_stages = { x:[] for x in self.steps2plot}
+        self.av_x_stages = { x:[] for x in self.steps2plot}
+        self.av_y_stages = { x:[] for x in self.steps2plot}
+        self.incident_e_stages = { x:[] for x in self.steps2plot}
     
-    def __call__(self, score_model, marginal_prob_std, diffusion_coeff, sampled_energies, init_x, batch_size=1, energy_trans_file='', x_trans_file='', y_trans_file='', ine_trans_file=''):
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1):
         
         # Time array
         t = torch.ones(batch_size, device=self.device)
-
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
-        
-        # Establish time steps
+        # Create array of time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
         step_size = time_steps[0]-time_steps[1]
 
@@ -341,17 +303,6 @@ class pc_sampler:
         
         diffusion_step_ = 0
         with torch.no_grad():
-            # Load saved pre-processor
-            # print(f'Loading file for hit e transformation inversion: {energy_trans_file}')
-            if ine_trans_file != '':
-                scalar_ine = load(open(ine_trans_file, 'rb'))
-            if energy_trans_file != '':
-                scalar_e = load(open(energy_trans_file, 'rb'))
-            if x_trans_file != '':
-                scalar_x = load(open(x_trans_file, 'rb'))
-            if y_trans_file != '':
-                scalar_y = load(open(y_trans_file, 'rb'))
-                
             # Matrix multiplication in GaussianFourier projection doesnt like float64
             sampled_energies = sampled_energies.to(x.device, torch.float32)
             
@@ -372,7 +323,7 @@ class pc_sampler:
                 # Conditional score prediction gives estimate of noise to remove
                 grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
                 
-                nc_steps = 1
+                nc_steps = 100
                 for n_ in range(nc_steps):
                     # Langevin corrector
                     noise = torch.normal(0,1,size=x.shape, device=x.device)
@@ -388,177 +339,53 @@ class pc_sampler:
                 
                 # Euler-Maruyama Predictor
                 # Adjust inputs according to scores
-                drift, diff = diffusion_coeff(x,batch_time_step)
+                drift, diff = self.diffusion_coeff_fn(x,batch_time_step)
                 drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
                 x_mean = x - drift*step_size
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
                 
                 # Store distributions at different stages of diffusion (for visualisation purposes only)
-                if diffusion_step_== 0:
+                if diffusion_step_ in self.steps2plot:
+                    step_incident_e = []
+                    step_hit_e = []
+                    step_hit_x = []
+                    step_hit_y = []
+                    step_deposited_energy = []
+                    step_av_x_pos = []
+                    step_av_y_pos = []
                     for shower_idx in range(0,len(x_mean)):
-                        # No mask initially to see full generated noise
-                        masked_output = x_mean
                         all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
-                        if ine_trans_file != '':
-                            all_ine = scalar_ine.inverse_transform(all_ine)
-                        all_ine = all_ine.flatten().tolist()[0]
-                        self.incident_e_step1.append( all_ine )
+                        all_ine = all_ine.flatten().tolist()
+                        step_incident_e.extend( all_ine )
                         
-                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
-                        if energy_trans_file != '':
-                            all_e = scalar_e.inverse_transform(all_e)
+                        all_e = np.array( x_mean[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
+                        total_deposited_energy = np.sum( all_e )
                         all_e = all_e.flatten().tolist()
-                        self.hit_energies_step1.extend(all_e)
-                        total_deposited_energy = sum( all_e )
-                        self.deposited_energy_step1.append(total_deposited_energy)
+                        step_hit_e.extend( all_e )
+                        step_deposited_energy.extend( [total_deposited_energy] )
                         
-                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
-                        if x_trans_file != '':
-                            all_x = scalar_x.inverse_transform(all_x)
+                        all_x = np.array( x_mean[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
+                        av_x_position = np.mean( all_x )
                         all_x = all_x.flatten().tolist()
-                        self.hit_x_step1.extend(all_x)
-                        av_x_position = np.sum( all_x )
-                        self.av_x_pos_step1.append( av_x_position )
+                        step_hit_x.extend(all_x)
+                        step_av_x_pos.extend( [av_x_position] )
                         
-                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
-                        if y_trans_file != '':
-                            all_y = scalar_y.inverse_transform(all_y)
+                        all_y = np.array( x_mean[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
+                        av_y_position = np.mean( all_y )
                         all_y = all_y.flatten().tolist()
-                        self.hit_y_step1.extend(all_y)
-                        av_y_position = np.sum( all_y )
-                        self.av_y_pos_step1.append( av_y_position )
-                if diffusion_step_==80:
-                    for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean
-                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
-                        if ine_trans_file != '':
-                            all_ine = scalar_ine.inverse_transform(all_ine)
-                        all_ine = all_ine.flatten().tolist()[0]
-                        self.incident_e_step25.append( all_ine )
-                        
-                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
-                        if energy_trans_file != '':
-                            all_e = scalar_e.inverse_transform(all_e)
-                        all_e = all_e.flatten().tolist()
-                        self.hit_energies_step25.extend(all_e)
-                        total_deposited_energy = sum( all_e )
-                        self.deposited_energy_step25.append(total_deposited_energy)
-                        
-                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
-                        if x_trans_file != '':
-                            all_x = scalar_x.inverse_transform(all_x)
-                        all_x = all_x.flatten().tolist()
-                        self.hit_x_step25.extend(all_x)
-                        av_x_position = np.sum( all_x )
-                        self.av_x_pos_step25.append( av_x_position )
-                        
-                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
-                        if y_trans_file != '':
-                            all_y = scalar_y.inverse_transform(all_y)
-                        all_y = all_y.flatten().tolist()
-                        self.hit_y_step25.extend(all_y)
-                        av_y_position = np.sum( all_y )
-                        self.av_y_pos_step25.append( av_y_position )
-                if diffusion_step_== 90:
-                    for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean
-                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
-                        if ine_trans_file != '':
-                            all_ine = scalar_ine.inverse_transform(all_ine)
-                        all_ine = all_ine.flatten().tolist()[0]
-                        self.incident_e_step50.append( all_ine )
-                        
-                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
-                        if energy_trans_file != '':
-                            all_e = scalar_e.inverse_transform(all_e)
-                        all_e = all_e.flatten().tolist()
-                        self.hit_energies_step50.extend(all_e)
-                        total_deposited_energy = sum( all_e )
-                        self.deposited_energy_step50.append(total_deposited_energy)
-                        
-                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
-                        if x_trans_file != '':
-                            all_x = scalar_x.inverse_transform(all_x)
-                        all_x = all_x.flatten().tolist()
-                        self.hit_x_step50.extend(all_x)
-                        av_x_position = np.sum( all_x )
-                        self.av_x_pos_step50.append( av_x_position )
-                        
-                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
-                        if y_trans_file != '':
-                            all_y = scalar_y.inverse_transform(all_y)
-                        all_y = all_y.flatten().tolist()
-                        self.hit_y_step50.extend(all_y)
-                        av_y_position = np.sum( all_y )
-                        self.av_y_pos_step50.append( av_y_position )
-                if diffusion_step_== 95:
-                    for shower_idx in range(0,len(x_mean)):
-                        masked_output = x_mean
-                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
-                        if ine_trans_file != '':
-                            all_ine = scalar_ine.inverse_transform(all_ine)
-                        all_ine = all_ine.flatten().tolist()[0]
-                        self.incident_e_step75.append( all_ine )
-                        
-                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
-                        if energy_trans_file != '':
-                            all_e = scalar_e.inverse_transform(all_e)
-                        all_e = all_e.flatten().tolist()
-                        self.hit_energies_step75.extend(all_e)
-                        total_deposited_energy = sum( all_e )
-                        self.deposited_energy_step75.append(total_deposited_energy)
-                        
-                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
-                        if x_trans_file != '':
-                            all_x = scalar_x.inverse_transform(all_x)
-                        all_x = all_x.flatten().tolist()
-                        self.hit_x_step75.extend(all_x)
-                        av_x_position = np.sum( all_x )
-                        self.av_x_pos_step75.append( av_x_position )
-                        
-                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
-                        if y_trans_file != '':
-                            all_y = scalar_y.inverse_transform(all_y)
-                        all_y = all_y.flatten().tolist()
-                        self.hit_y_step75.extend(all_y)
-                        av_y_position = np.sum( all_y )
-                        self.av_y_pos_step75.append( av_y_position )
-                if diffusion_step_== 99:
-                    for shower_idx in range(0,len(x_mean)):
-
-                        masked_output = x_mean
-                        
-                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
-                        if ine_trans_file != '':
-                            all_ine = scalar_ine.inverse_transform(all_ine)
-                        all_ine = all_ine.flatten().tolist()[0]
-                        self.incident_e_step99.append( all_ine )
-                        
-                        all_e = np.array( masked_output[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
-                        if energy_trans_file != '':
-                            all_e = scalar_e.inverse_transform(all_e)
-                        all_e = all_e.flatten().tolist()
-                        self.hit_energies_step99.extend(all_e)
-                        total_deposited_energy = sum( all_e )
-                        self.deposited_energy_step99.append(total_deposited_energy)
-                        
-                        all_x = np.array( masked_output[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
-                        if x_trans_file != '':
-                            all_x = scalar_x.inverse_transform(all_x)
-                        all_x = all_x.flatten().tolist()
-                        self.hit_x_step99.extend(all_x)
-                        av_x_position = np.sum( all_x )
-                        self.av_x_pos_step99.append( av_x_position )
-                        
-                        all_y = np.array( masked_output[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
-                        if y_trans_file != '':
-                            all_y = scalar_y.inverse_transform(all_y)
-                        all_y = all_y.flatten().tolist()
-                        self.hit_y_step99.extend(all_y)
-                        av_y_position = np.sum( all_y )
-                        self.av_y_pos_step99.append( av_y_position )
-                        
+                        step_hit_y.extend(all_y)
+                        step_av_y_pos.extend( [av_y_position] )
+                    
+                    self.incident_e_stages[diffusion_step_].extend(step_incident_e)
+                    self.hit_energy_stages[diffusion_step_].extend(step_hit_e)
+                    self.hit_x_stages[diffusion_step_].extend(step_hit_x)
+                    self.hit_y_stages[diffusion_step_].extend(step_hit_y)
+                    self.deposited_energy_stages[diffusion_step_].extend(step_deposited_energy)
+                    self.av_x_stages[diffusion_step_].extend(step_av_x_pos)
+                    self.av_y_stages[diffusion_step_].extend(step_av_y_pos)
+                       
                 diffusion_step_+=1
+                
         # Do not include noise in last step
         x_mean = x_mean
         return x_mean

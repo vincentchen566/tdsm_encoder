@@ -11,17 +11,25 @@ import utils, psutil
 
 # tanh with enhanced gradient for hit energy transformation
 def transform_hit_e(hit_energies):
-    new_e = 2/(1+np.exp(-10*hit_energies)) - 1
+    #new_e = 2/(1+np.exp(-10*hit_energies)) - 1
+    new_e = -(1/15.)*np.log(hit_energies/(1+hit_energies))
     new_e = np.nan_to_num(new_e)
     new_e = np.reshape(new_e,(-1,))
     return new_e
 
 # Sigmoid with reduced gradient for hit positions transformation
-def transform_hit_pos(hit_pos):
-    new_pos = 1/(1+np.exp(-0.1*hit_pos))
+def transform_hit_xy(hit_pos):
+    new_pos = 1/(1+np.exp(-0.04*hit_pos))
     new_pos = np.nan_to_num(new_pos)
     new_pos = np.reshape(new_pos,(-1,))
     return new_pos
+
+# Min max for z layer
+def transform_hit_z(z_):
+    maxz_ = np.max(z_)
+    minz_ = np.min(z_)
+    z_ = (z_ - minz_) / (maxz_ - minz_)
+    return z_
 
 # Min-max incident energy transformation
 def transform_incident_energy(ine_):
@@ -111,9 +119,9 @@ def main():
                     
                 if transform == 1:
                     E_ = transform_hit_e(E_)
-                    X_ = transform_hit_pos(X_)
-                    Y_ = transform_hit_pos(Y_)
-                    Z_ = transform_hit_pos(Z_)
+                    X_ = transform_hit_xy(X_)
+                    Y_ = transform_hit_xy(Y_)
+                    Z_ = transform_hit_z(Z_)
                     
                 E_ = torch.from_numpy( E_.flatten() )
                 X_ = torch.from_numpy( X_.flatten() )
@@ -172,15 +180,12 @@ def main():
                 hit_ys = shower_data[0][:,2]
                 hit_zs = shower_data[0][:,3]
 
-                mask = hit_energies != 0.0
-
+                #mask = hit_energies != 0.0
                 #real_hit_energies = torch.masked_select(hit_energies,mask)
+
                 real_hit_energies = hit_energies
-                #real_hit_xs = torch.masked_select(hit_xs,mask)
                 real_hit_xs = hit_xs
-                #real_hit_ys = torch.masked_select(hit_ys,mask)
                 real_hit_ys = hit_ys
-                #real_hit_zs = torch.masked_select(hit_zs,mask)
                 real_hit_zs = hit_zs
                 
                 real_hit_energies = real_hit_energies.tolist()

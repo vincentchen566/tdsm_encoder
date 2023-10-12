@@ -39,12 +39,9 @@ torch.cuda.get_arch_list()
 ```
 when run on a machine with GPU capability, should return a list that includes sm_80.
 
-Living list of required libraries:
+List of required libraries not in lxplus8 environment by default:
 ```
 torch
-functools
-numpy
-matplotlib
 ```
 
 # Condor
