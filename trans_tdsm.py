@@ -658,13 +658,13 @@ def main():
     ### HYPERPARAMETERS ###
     train_ratio = 0.9
     batch_size = 128
-    lr = 0.001
-    n_epochs = 1000
+    lr = 1e-3
+    n_epochs = 1500
     ### SDE PARAMETERS ###
     SDE = 'VP'
     if SDE == 'VP':
         sigma_max = 20.0
-        sigma_min = 0.1
+        sigma_min = 0.01
     if SDE == 'VE':
         sigma_max = 20.0
         sigma_min = 0.1
@@ -684,6 +684,7 @@ def main():
     ### SDE PARAMETERS ###
     SDE = {SDE}
     sigma/beta max. = {sigma_max}
+    sigma/beta min. = {sigma_min}
     ### MODEL PARAMETERS ###
     batch_size = {batch_size}
     lr = {lr}
@@ -701,7 +702,7 @@ def main():
     
     # Instantiate stochastic differential equation
     if SDE == 'VP':
-        sde = utils.VPSDE(beta_max=sigma_max,device=device)
+        sde = utils.VPSDE(beta_max=sigma_max, beta_min=sigma_min, device=device)
     if SDE == 'VE':
         sde = utils.VESDE(sigma_max=sigma_max,device=device)
     marginal_prob_std_fn = functools.partial(sde.marginal_prob)
@@ -828,7 +829,6 @@ def main():
 
         # Optimiser needs to know model parameters for to optimise
         optimiser = RAdam(model.parameters(),lr=lr)
-        #optimiser = RAdam(model.parameters(),lr=initial_lr)
         scheduler = lr_scheduler.ExponentialLR(optimiser, gamma=0.99)
         
         av_training_losses_per_epoch = []
