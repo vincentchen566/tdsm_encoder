@@ -472,7 +472,7 @@ def plot_diffusion_xy(axes, X1, X2, GX1, GX2, hist_nbins=50, x0_label="", x1_lab
     
     return
 
-def make_diffusion_plot(distributions, outdir=''):
+def make_diffusion_plot(distributions, titles=[], outdir=''):
     
     fig = plt.figure(figsize=(50, 10))
     #fig.set_tight_layout(True)
@@ -500,7 +500,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=1 (noisy)',
+        name=f't={titles[0]} (noisy)',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -516,7 +516,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=0.75',
+        name=f't={titles[1]}',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -532,7 +532,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=0.50',
+        name=f't={titles[2]}',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -548,7 +548,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=0.25',
+        name=f't={titles[3]}',
         xlim=x_lim,
         ylim=y_lim
     )
@@ -564,7 +564,7 @@ def make_diffusion_plot(distributions, outdir=''):
         hist_nbins=50,
         x0_label=xlabel,
         x1_label=ylabel,
-        name='t=0.0 (after 100 steps)',
+        name=f't={titles[4]}',
         xlim=x_lim,
         ylim=y_lim
     )
