@@ -1,4 +1,5 @@
-import torch, utils, sys, os
+import torch, sys, os
+import util.data_utils as utils
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.colorbar import ColorbarBase
@@ -111,7 +112,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 incident_energies = incident_energies.cpu().numpy().copy()
                 
                 # Mask for padded values
-                mask = ~(data_np[:,:,1] <= 0.1)
+                mask = ~(data_np[:,:,0] <= 0.01)
                 
                 incident_energies = np.array(incident_energies).reshape(-1,1)
                 incident_energies = incident_energies.flatten().tolist()
@@ -123,7 +124,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     shower_counter+=1
                     
                     # Only use non-padded values for plots
-                    valid_hits = data_np[j][mask[j]]
+                    valid_hits = data_np[j]#[mask[j]]
                     
                     # To transform back to original energies for plots
                     all_e = np.array(valid_hits[:,0]).reshape(-1,1)
@@ -166,7 +167,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             data_np = shower_data.cpu().numpy().copy()
             energy_np = incident_energies.cpu().numpy().copy()
             
-            mask = ~(data_np[:,:,1] <= 0.1)
+            mask = ~(data_np[:,:,0] <= 0.01)
             
             # For each shower in batch
             for j in range(len(data_np)):
@@ -174,7 +175,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     break
                     
                 shower_counter+=1
-                valid_hits = data_np[j][mask[j]]
+                valid_hits = data_np[j]#[mask[j]]
                 
                 # To transform back to original energies for plots                    
                 all_e = np.array(valid_hits[:,0]).reshape(-1,1)
