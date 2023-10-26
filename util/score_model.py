@@ -25,16 +25,6 @@ class GaussianFourierProjection(nn.Module):
         gauss_out = torch.cat([torch.sin(time_proj), torch.cos(time_proj)], dim=-1)
         return gauss_out
 
-class AdaptiveBatchNorm2D(nn.Module):
-    def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True):
-        super(AdaptiveBatchNorm2D, self).__init__()
-        self.bn = nn.BatchNorm2d(num_features, eps, momentum, affine)
-        self.a = nn.Parameter(torch.FloatTensor(1, 1, 1))
-        self.b = nn.Parameter(torch.FloatTensor(1, 1, 1))
-
-    def forward(self, x):
-        return self.a * x + self.b * self.bn(x)
-
 class Dense(nn.Module):
     """Fully connected layer that reshapes output of embedded conditional variable to feature maps"""
     def __init__(self, input_dim, output_dim):
