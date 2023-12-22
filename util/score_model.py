@@ -11,6 +11,7 @@ import util.display
 import tqdm
 import util.data_utils as utils
 from collections import OrderedDict
+from torch.utils.checkpoint import checkpoint_sequential
 
 class GaussianFourierProjection(nn.Module):
     """Gaussian random features for encoding time steps"""
@@ -277,7 +278,21 @@ class Embed_Block(nn.Module):
         x_cls_expand = self.cls_token.expand(x.size(0), 1, -1)
         return [embed_x_, embed_t_, embed_e_, x_cls_expand, src_key_padding_mask]
 
-def get_seq_model(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, **kwargs):
+class Output_Block(nn.Module):
+    def __init__(self, n_feat_dim, embed_dim, marginal_prob_std):
+        self.out = nn.Linear(embed_dim, n_feat_dim)
+        self.marginal_prob_std = marginal_prob_std
+    def forward(self, input_):
+        x = input_[0]
+        t = input_[1]
+        e = input_[2]
+        x_cls = input_[3]
+        src_key_padding_mask = input_[4]
+        mean_ , std_ = self.marginal_prob_std(x,t)
+        output = self.out(x) / std_[:, None, None]
+        return output
+
+def get_seq_model(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std, **kwargs):
     module_dict = OrderedDict()
     module_dict['embed1'] = Embed_Block(n_feat_dim, embed_dim, hidden_dim)
     for i in range(num_encoder_blocks):
@@ -286,11 +301,12 @@ def get_seq_model(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_att
                                                                    hidden_dim=hidden_dim,
                                                                    dropout=dropout_gen,
                                                                    )
+    module_dict['output1'] = Output_Block(n_feat_dim=n_feat_dim, embed_dim=embed_dim, marginal_prob_std=marginal_prob_std) 
     seq_model = nn.Sequential(module_dict)
     return seq_model
 
 
-def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False):
+def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False, serialized_model=False, cp_chunks=0):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
     Denoising score matching
@@ -327,7 +343,13 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, ep
         perturbed_x = mean_ + std_[:, None, None]*z
 
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
-    scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
+    if serialized_model:
+        if cp_chunks == 0:
+            scores = model([perturbed_x, random_t, incident_energies, padding_mask])
+        else:
+            scores = checkpoint_sequential(model, cp_chunks, [perturbed_x, random_t, incident_energies, padding_mask])
+    else:
+        scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
     
     # Calculate loss 
     losses = torch.square(scores*std_[:,None,None] + z)
