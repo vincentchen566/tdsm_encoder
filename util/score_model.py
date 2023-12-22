@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 import util.display
 import tqdm
 import util.data_utils as utils
+from collections import OrderedDict
 
 class GaussianFourierProjection(nn.Module):
     """Gaussian random features for encoding time steps"""
@@ -183,6 +184,111 @@ class Gen(nn.Module):
         mean_ , std_ = self.marginal_prob_std(x,t)
         output = self.out(x) / std_[:, None, None]
         return output
+
+
+############################################
+##  Serialized Model (under development)  ##
+############################################
+
+class Transformer_Block(nn.Module):
+    def __init__(self, embed_dim, num_heads, hidden_dim, dropout, src_key_padding_mask=None):
+        """Encoder block:
+        Args:
+        embed_dim: length of embedding / dimension of the model
+        num_heads: number of parallel attention heads to use
+        hidden: dimensionaliy of hidden layer
+        dropout: regularising layer
+        """
+        super().__init__()
+        # Need to set batch_first=True
+        # Normally in NLP the batch dimension would be the second dimension
+        # In most practices it's the first dimension so we match other conventions
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True, dropout=0)
+
+        self.ffnn = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.Dropout(dropout),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim)
+        )
+        self.ffnn2 = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.Dropout(dropout),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim)
+        )
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.norm3 = nn.LayerNorm(embed_dim)
+        self.norm4 = nn.LayerNorm(embed_dim)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
+        self.dense_t = Dense(embed_dim, 1)
+        self.dense_e = Dense(embed_dim, 1)
+    def forward(self, input_):
+        #residual = x.clone()
+        x = input_[0]
+        t = input_[1]
+        e = input_[2]
+        x_cls = input_[3]
+        src_key_padding_mask = input_[4]
+        # Mean-field attention
+        # Multiheaded self-attention but replacing query with a single mean field approximator
+        # attn (query, key, value, key mask)
+        x += self.dense_t(t).clone()
+        x += self.dense_e(e).clone()
+        attn_out = self.attn(x_cls, x, x, key_padding_mask = src_key_padding_mask)[0]
+
+        attn_res_out = x_cls + attn_out
+        norm1_out = self.norm1(self.dropout1(attn_res_out))
+        ffnn_out = self.ffnn(norm1_out)
+        ffnn_res_out = ffnn_out + norm1_out
+        norm2_out = self.norm2(self.dropout2(ffnn_res_out))
+
+        # Added to shower hits
+        x = x + norm2_out
+        x = self.norm3(x)
+        ffnn_out = self.ffnn2(x)
+        x = x + self.dropout3(ffnn_out)
+        x = self.norm4(x)
+
+        return [x, t, e, x_cls, src_key_padding_mask]
+
+
+class Embed_Block(nn.Module):
+    def __init__(self, n_feat_dim, embed_dim, hidden_dim, **kwargs):
+        super().__init__()
+        self.embed = nn.Linear(n_feat_dim, embed_dim)
+        self.embed_t = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
+        self.embed_e = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
+        self.act_sig = lambda x: x * torch.sigmoid(x)
+        self.cls_token = nn.Parameter(torch.ones(1,1,embed_dim), requires_grad=True)
+    def forward(self, input_):
+
+        x = input_[0]
+        t = input_[1]
+        e = input_[2]
+        src_key_padding_mask = input_[3]
+
+        embed_x_ = self.embed(x)
+        embed_t_ = self.act_sig(self.embed_t(t))
+        embed_e_ = self.act_sig(self.embed_e(e))
+        x_cls_expand = self.cls_token.expand(x.size(0), 1, -1)
+        return [embed_x_, embed_t_, embed_e_, x_cls_expand, src_key_padding_mask]
+
+def get_seq_model(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, **kwargs):
+    module_dict = OrderedDict()
+    module_dict['embed1'] = Embed_Block(n_feat_dim, embed_dim, hidden_dim)
+    for i in range(num_encoder_blocks):
+        module_dict['transformer{}'.format(i)] = Transformer_Block(embed_dim=embed_dim,
+                                                                   num_heads=num_attn_heads,
+                                                                   hidden_dim=hidden_dim,
+                                                                   dropout=dropout_gen,
+                                                                   )
+    seq_model = nn.Sequential(module_dict)
+    return seq_model
+
 
 def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False):
     """The loss function for training score-based generative models
