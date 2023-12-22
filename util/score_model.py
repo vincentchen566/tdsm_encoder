@@ -184,7 +184,7 @@ class Gen(nn.Module):
         output = self.out(x) / std_[:, None, None]
         return output
 
-def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=1e-3, device='cpu'):
+def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False):
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
     Denoising score matching
@@ -200,7 +200,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     """
     # Generate padding mask for padded entries
     # Positions with True are ignored while False values will be unchanged
-    padding_mask = (x[:,:,0] == 0).type(torch.bool)
+    padding_mask = (x[:,:,0] == padding_value).type(torch.bool)
     
     # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
@@ -214,7 +214,11 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value, eps=
     mean_, std_ = marginal_prob_std(x,random_t)
     
     # Add noise to input
-    perturbed_x = mean_ + std_[:, None, None]*z
+    if not diffusion_on_mask:
+        mask_tensor = (~padding_mask).float()[...,None]
+        perturbed_x = mean_ + std+[:, None, None]*z*mask_tensor # No diffussion on padding value 
+    else:
+        perturbed_x = mean_ + std_[:, None, None]*z
 
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
     scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)

@@ -38,12 +38,13 @@ class pc_sampler:
         self.av_y_stages = { x:[] for x in self.steps2plot}
         self.incident_e_stages = { x:[] for x in self.steps2plot}
     
-    def __call__(self, score_model, sampled_energies, init_x, batch_size=1):
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
         
         # Time array
         t = torch.ones(batch_size, device=self.device)
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
+        mask_tensor  = (~padding_mask).float()[...,None]
         # Create array of time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
         step_size = time_steps[0]-time_steps[1]
@@ -89,6 +90,8 @@ class pc_sampler:
                     # Adjust inputs according to scores using Langevin iteration rule
                     x_mean = x + langevin_step_size * grad
                     x = x_mean + torch.sqrt(2 * langevin_step_size) * noise
+                    if not diffusion_on_mask:
+                        x = x*mask_tensor # At every step, we should make padding entries back to 0 (default padding value = 0) in order to consist with the training i.e. we do not diffuse on the padding when doing training, so the value at any time step of padding entries should always be padding value.
                 
                 # Euler-Maruyama Predictor
                 # Adjust inputs according to scores
@@ -96,7 +99,7 @@ class pc_sampler:
                 drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
                 x_mean = x - drift*step_size
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
-                
+                 
                 # Store distributions at different stages of diffusion (for visualisation purposes only)
                 if diffusion_step_ in self.steps2plot:
                     step_incident_e = []
@@ -141,7 +144,8 @@ class pc_sampler:
                 
         # Do not include noise in last step
         x_mean = x_mean
-        return x_mean
+        # We should return the tensor that has exactly the same padding value (0 here) with the padding entries (no matter we diffuse on the padding entries in the training or not)
+        return x_mean*mask_tensor
     
 def random_sampler(pdf,xbin):
     myCDF = np.zeros_like(xbin,dtype=float)
