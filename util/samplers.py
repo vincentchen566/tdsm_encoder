@@ -37,14 +37,17 @@ class pc_sampler:
         self.av_x_stages = { x:[] for x in self.steps2plot}
         self.av_y_stages = { x:[] for x in self.steps2plot}
         self.incident_e_stages = { x:[] for x in self.steps2plot}
-    
-    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, addmask=0):
+
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
         
         # Padding masks defined by initial # hits / zero padding
         attn_padding_mask = (init_x[:,:,0] == self.padding_value).type(torch.bool)
-        
         # Time array
         t = torch.ones(batch_size, device=self.device)
+        
+        # mask avoids perturbing padded values
+        #mask_tensor = (x[:,:,0] != 0).unsqueeze(-1)
+        mask_tensor  = (~attn_padding_mask).float()[...,None]
         
         # Create array of time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
@@ -54,9 +57,6 @@ class pc_sampler:
             time_steps = tqdm.notebook.tqdm(time_steps)
         
         x = init_x
-        
-        # mask avoids perturbing padded values
-        input_mask = (x[:,:,0] != 0).unsqueeze(-1)
         
         diffusion_step_ = 0
         with torch.no_grad():
@@ -70,7 +70,7 @@ class pc_sampler:
             for time_step in time_steps:
                 
                 # Input shower = noise * std from SDE
-                if addmask:
+                if not diffusion_on_mask:
                     x = x*input_mask
                     z = z*input_mask
                 
@@ -91,7 +91,7 @@ class pc_sampler:
                     noise = torch.normal(0,1,size=x.shape, device=x.device)
                     
                     # Mask Langevin noise
-                    if addmask:
+                    if not diffusion_on_mask:
                         noise = noise*input_mask
                         
                     # Step size calculation: snr * ratio of gradients in noise / prediction used to calculate
@@ -106,18 +106,19 @@ class pc_sampler:
                     # Adjust inputs according to scores using Langevin iteration rule
                     x_mean = x + langevin_step_size * grad
                     x = x_mean + torch.sqrt(2 * langevin_step_size) * noise
-                    if addmask:
-                        x = x*input_mask
+
+                    if not diffusion_on_mask:
+                        x = x*mask_tensor
                 
                 # Euler-Maruyama Predictor
                 # Adjust inputs according to scores
                 drift, diff = self.diffusion_coeff_fn(x,batch_time_step)
                 drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
                 x_mean = x - drift*step_size
-                if addmask:
+                if not diffusion_on_mask:
                     x_mean = x_mean*input_mask
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
-                
+                 
                 # Store distributions at different stages of diffusion (for visualisation purposes only)
                 if diffusion_step_ in self.steps2plot:
                     step_incident_e = []
