@@ -37,14 +37,18 @@ class pc_sampler:
         self.av_x_stages = { x:[] for x in self.steps2plot}
         self.av_y_stages = { x:[] for x in self.steps2plot}
         self.incident_e_stages = { x:[] for x in self.steps2plot}
-    
+
     def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
         
+        # Padding masks defined by initial # hits / zero padding
+        attn_padding_mask = (init_x[:,:,0] == self.padding_value).type(torch.bool)
         # Time array
         t = torch.ones(batch_size, device=self.device)
-        # Padding masks defined by initial # hits / zero padding
-        padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
-        mask_tensor  = (~padding_mask).float()[...,None]
+        
+        # mask avoids perturbing padded values
+        #mask_tensor = (x[:,:,0] != 0).unsqueeze(-1)
+        mask_tensor  = (~attn_padding_mask).float()[...,None]
+        
         # Create array of time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
         step_size = time_steps[0]-time_steps[1]
@@ -52,7 +56,6 @@ class pc_sampler:
         if self.jupyternotebook:
             time_steps = tqdm.notebook.tqdm(time_steps)
         
-        # Input shower is just some noise * std from SDE
         x = init_x
         
         diffusion_step_ = 0
@@ -60,44 +63,60 @@ class pc_sampler:
             # Matrix multiplication in GaussianFourier projection doesnt like float64
             sampled_energies = sampled_energies.to(x.device, torch.float32)
             
+            # Noise to add to input
+            z = torch.normal(0,1,size=x.shape, device=x.device)
+            
             # Iterate through time steps
             for time_step in time_steps:
+                
+                # Input shower = noise * std from SDE
+                if not diffusion_on_mask:
+                    x = x*input_mask
+                    z = z*input_mask
                 
                 if not self.jupyternotebook:
                     print(f"Sampler step: {time_step:.4f}") 
                 
                 batch_time_step = torch.ones(batch_size, device=x.device) * time_step
-
                 alpha = torch.ones_like(torch.tensor(time_step))
 
                 # Corrector step (Langevin MCMC)
                 # Noise to add to input
-                z = torch.normal(0,1,size=x.shape, device=x.device)
-                
                 # Conditional score prediction gives estimate of noise to remove
-                grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
+                grad = score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
                 
                 nc_steps = 100
                 for n_ in range(nc_steps):
                     # Langevin corrector
                     noise = torch.normal(0,1,size=x.shape, device=x.device)
-                    # step size calculation: snr * ratio of gradients in noise / prediction used to calculate
+                    
+                    # Mask Langevin noise
+                    if not diffusion_on_mask:
+                        noise = noise*input_mask
+                        
+                    # Step size calculation: snr * ratio of gradients in noise / prediction used to calculate
                     flattened_scores = grad.reshape(grad.shape[0], -1)
                     grad_norm = torch.linalg.norm( flattened_scores, dim=-1 ).mean()
                     flattened_noise = noise.reshape(noise.shape[0],-1)
                     noise_norm = torch.linalg.norm( flattened_noise, dim=-1 ).mean()
+                    
+                    # Langevin step-size
                     langevin_step_size =  (self.snr * noise_norm / grad_norm)**2 * 2 * alpha
+                    
                     # Adjust inputs according to scores using Langevin iteration rule
                     x_mean = x + langevin_step_size * grad
                     x = x_mean + torch.sqrt(2 * langevin_step_size) * noise
+
                     if not diffusion_on_mask:
-                        x = x*mask_tensor # At every step, we should make padding entries back to 0 (default padding value = 0) in order to consist with the training i.e. we do not diffuse on the padding when doing training, so the value at any time step of padding entries should always be padding value.
+                        x = x*mask_tensor
                 
                 # Euler-Maruyama Predictor
                 # Adjust inputs according to scores
                 drift, diff = self.diffusion_coeff_fn(x,batch_time_step)
-                drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
+                drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
                 x_mean = x - drift*step_size
+                if not diffusion_on_mask:
+                    x_mean = x_mean*input_mask
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
                  
                 # Store distributions at different stages of diffusion (for visualisation purposes only)
@@ -143,9 +162,160 @@ class pc_sampler:
                 diffusion_step_+=1
                 
         # Do not include noise in last step
-        x_mean = x_mean
-        # We should return the tensor that has exactly the same padding value (0 here) with the padding entries (no matter we diffuse on the padding entries in the training or not)
-        return x_mean*mask_tensor
+        return x_mean
+
+class new_pc_sampler:
+    def __init__(self, sde, padding_value, snr=0.2, sampler_steps=100, steps2plot=(), device='cuda', eps=1e-3, jupyternotebook=False):
+        ''' Generate samples from score based models with Predictor-Corrector method
+            Args:
+            score_model: A PyTorch model that represents the time-dependent score-based model.
+            marginal_prob_std: A function that gives the std of the perturbation kernel
+            diffusion_coeff: A function that gives the diffusion coefficient 
+            of the SDE.
+            batch_size: The number of samplers to generate by calling this function once.
+            num_steps: The number of sampling steps. 
+            Equivalent to the number of discretized time steps.    
+            device: 'cuda' for running on GPUs, and 'cpu' for running on CPUs.
+            eps: The smallest time step for numerical stability.
+
+            Returns:
+                samples
+        '''
+        self.sde = sde
+        self.diffusion_coeff_fn = functools.partial(self.sde.sde)
+        self.snr = snr
+        self.padding_value = padding_value
+        self.sampler_steps = sampler_steps
+        self.steps2plot = steps2plot
+        self.device = device
+        self.eps = eps
+        self.jupyternotebook = jupyternotebook
+        
+        # Dictionary objects  hold lists of variable values at various stages of diffusion process
+        # Used for visualisation and diagnostic purposes only
+        self.hit_energy_stages = { x:[] for x in self.steps2plot}
+        self.hit_x_stages = { x:[] for x in self.steps2plot}
+        self.hit_y_stages = { x:[] for x in self.steps2plot}
+        self.deposited_energy_stages = { x:[] for x in self.steps2plot}
+        self.av_x_stages = { x:[] for x in self.steps2plot}
+        self.av_y_stages = { x:[] for x in self.steps2plot}
+        self.incident_e_stages = { x:[] for x in self.steps2plot}
+    
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1):
+        
+        # Time array
+        #t = torch.ones(batch_size, device=self.device)
+        # Padding masks defined by initial # hits / zero padding
+        padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
+        # Create array of time steps
+        #time_steps = np.linspace(1., self.eps, self.sampler_steps)
+        #step_size = time_steps[0]-time_steps[1]
+        t=1.
+        h=0.01
+        epsilon_rel=0.05
+        theta=0.9
+        r=0.9
+        #r=0.5
+
+        #if self.jupyternotebook:
+            #time_steps = tqdm(range(time_steps))
+            #tqdm(time_steps, desc="Processing")
+        
+        # Input shower is just some noise * std from SDE
+        x = init_x
+        x_pre=x
+        
+        diffusion_step_ = 0
+
+        diffusion_step_plot=0
+        with torch.no_grad():
+            # Matrix multiplication in GaussianFourier projection doesnt like float64
+            sampled_energies = sampled_energies.to(x.device, torch.float32)
+            
+            # Iterate through time steps
+            while (t-h)>0. and h!=0:
+                
+                if not self.jupyternotebook:
+                    print(f"Sampler step: {t:.4f}") 
+                
+                batch_time_step = torch.ones(batch_size, device=x.device) * t
+                batch_time_step_pron = torch.ones(batch_size, device=x.device) * (t-h)
+
+
+                #alpha = torch.ones_like(torch.tensor(t))
+
+                # Corrector step (Langevin MCMC)
+                # Noise to add to input
+                z = torch.normal(0,1,size=x.shape, device=x.device)
+                
+                # Conditional score prediction gives estimate of noise to remove
+                grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
+
+                drift, diff = self.diffusion_coeff_fn(x,batch_time_step)
+
+                #print("drift:",drift)
+                #print("diff:",diff)
+
+                drift=drift.to('cuda:0')
+                diff=diff.to('cuda:0')
+                #score_model=score_model.to('cuda:0') 
+
+                x_pron=x-h*drift+h*(diff**2)[:,None,None]*score_model(x, batch_time_step, sampled_energies, mask=padding_mask)+h**0.5*(diff)[:,None,None]*z
+
+                #print("x':",x_pron)
+
+                drift_pron, diff_pron = self.diffusion_coeff_fn(x_pron,batch_time_step_pron) 
+
+                #print("drift_pron:",drift_pron)
+                #print("diff_pron:",diff_pron)
+                #print("score_model:",score_model(x_pron, batch_time_step_pron, sampled_energies, mask=padding_mask))
+
+                drift_pron=drift_pron.to('cuda:0')
+                diff_pron=diff_pron.to('cuda:0')
+                #score_model=score_model.to('cuda:0')
+
+                x_tilta=x-h*drift_pron+h*(diff_pron**2)[:,None,None]*score_model(x_pron, batch_time_step_pron, sampled_energies, mask=padding_mask)+h**0.5*(diff_pron)[:,None,None]*z
+
+                #print("x_tilta:",x_tilta)
+
+                x_pron_pron=0.5*(x_pron+x_tilta)
+
+                epsilon_abs = torch.ones_like(x_pron, device=x.device) * 0.1
+
+                delta=np.maximum(epsilon_abs.cpu(),epsilon_rel*np.maximum(torch.abs(x_pron.cpu()),torch.abs(x_pre.cpu())))
+
+                #print("delta:",delta)
+
+                x=x.to('cuda:0')
+                x_pron=x_pron.to('cuda:0')
+                x_pron_pron=x_pron_pron.to('cuda:0')
+                delta=delta.to('cuda:0')
+
+                #E=1/((x.shape[0])**(0.5))*torch.linalg.norm(((x_pron-x_pron_pron)/delta).reshape(x.shape[0],-1), dim=-1).mean()
+                E=1./((x.shape[0])**(0.5))*torch.linalg.norm(((x_pron-x_pron_pron)/delta))
+
+                #print("E:",E)
+
+                #print("t:",t)
+                #print("h:",h)
+
+                if E <= 1 :
+                    x=x_pron_pron
+                    t=t-h
+                    x_pre=x_pron
+
+                    #print("hello")
+                        
+
+                       
+                    diffusion_step_+=1
+
+                    #print("diffusion step:", diffusion_step_)
+                h=min(t,theta*h*E**(-r))
+                
+        # Do not include noise in last step
+        #x_mean = x_mean
+        return x
     
 def random_sampler(pdf,xbin):
     myCDF = np.zeros_like(xbin,dtype=float)

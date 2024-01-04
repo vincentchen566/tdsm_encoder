@@ -53,16 +53,26 @@ class Block(nn.Module):
         # In most practices it's the first dimension so we match other conventions
         self.attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True, dropout=0)
         
+        self.ffnn_cls = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.Dropout(dropout),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim)
+        )
+        
         self.ffnn = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
             nn.Dropout(dropout),
             nn.GELU(),
             nn.Linear(hidden_dim, embed_dim)
         )
+        
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
+        self.norm3 = nn.LayerNorm(embed_dim)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
 
     def forward(self,x,x_cls,src_key_padding_mask=None,):
         #residual = x.clone()
@@ -70,20 +80,20 @@ class Block(nn.Module):
         # Mean-field attention
         # Multiheaded self-attention but replacing query with a single mean field approximator
         # attn (query, key, value, key mask)
-        attn_out = self.attn(x_cls, x, x, key_padding_mask=src_key_padding_mask)[0]
+        cls_attn_out = self.attn(x_cls, x, x, key_padding_mask=src_key_padding_mask)[0]
         
-        attn_res_out = x_cls + attn_out
-        norm1_out = self.norm1(self.dropout1(attn_res_out))
-        ffnn_out = self.ffnn(norm1_out)
-        ffnn_res_out = ffnn_out + norm1_out
-        norm2_out = self.norm2(self.dropout2(ffnn_res_out))
+        cls_attn_res_out = x_cls + cls_attn_out
+        cls_norm1_out = self.norm1(self.dropout1(cls_attn_res_out))
+        cls_ffnn_out = self.ffnn_cls(cls_norm1_out)
+        cls_ffnn_res_out = cls_ffnn_out + cls_norm1_out
+        cls_norm2_out = self.norm2(self.dropout2(cls_ffnn_res_out))
         
         # Added to shower hits
-        x = x + norm2_out
-        x = self.norm2(x)
+        x = x + cls_norm2_out
+        x = self.norm3(x)
         ffnn_out = self.ffnn(x)
-        x = x + self.dropout2(ffnn_out)
-        x = self.norm2(x)
+        x = x + self.dropout3(ffnn_out)
+        x = self.norm3(x)
         return x
 
 class EncoderBlock(nn.Module):
@@ -131,7 +141,8 @@ class Gen(nn.Module):
         # Seperate embedding for (time/incident energy) conditional inputs (small NN with fixed weights)
         self.embed_t = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
         # Boils embedding down to single value
-        self.dense1 = Dense(embed_dim, 1)
+        self.dense_t = Dense(embed_dim, 1)
+        self.dense_e = Dense(embed_dim, 1)
         # Module list of encoder blocks
         self.encoder = nn.ModuleList(
             [
@@ -175,8 +186,8 @@ class Gen(nn.Module):
         # Feed input embeddings into encoder block
         for layer in self.encoder:
             # Match dimensions and append to input
-            x += self.dense1(embed_t_).clone()
-            x += self.dense1(embed_e_).clone()
+            x += self.dense_t(embed_t_).clone()
+            x += self.dense_e(embed_e_).clone()
             # Each encoder block takes previous blocks output as input
             x = layer(x, x_cls, mask) # Block layers 
             #x = layer(x, mask) # EncoderBlock layers
@@ -185,7 +196,6 @@ class Gen(nn.Module):
         mean_ , std_ = self.marginal_prob_std(x,t)
         output = self.out(x) / std_[:, None, None]
         return output
-
 
 ############################################
 ##  Serialized Model (under development)  ##
@@ -307,6 +317,7 @@ def get_seq_model(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_att
 
 
 def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False, serialized_model=False, cp_chunks=0):
+
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
     Denoising score matching
@@ -320,44 +331,47 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, ep
         marginal_prob_std: A function that gives the standard deviation of the perturbation kernel
         eps: A tolerance value for numerical stability
     """
-    # Generate padding mask for padded entries
+    # Generate padding mask for attention mechanism
     # Positions with True are ignored while False values will be unchanged
-    padding_mask = (x[:,:,0] == padding_value).type(torch.bool)
+    attn_padding_mask = (x[:,:,0] == 0).type(torch.bool)
     
     # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
     
-    # Noise input 
-    # Multiplied by mask so we don't go perturbing zero padded values
-    z = torch.normal(0,1,size=x.shape, device=device)
-    z = z.to(device)
+    # Mask to avoid perturbing padded entries
+    #input_mask = (x[:,:,0] != 0).unsqueeze(-1)
+    mask_tensor = (~padding_mask).float()[...,None]
     
-    # Sample from standard deviation of noise
+    # Calculate mean and standard deviation of the perturbation kernel
     mean_, std_ = marginal_prob_std(x,random_t)
     
-    # Add noise to input
+    # Noise
+    z = torch.normal(0,1,size=x.shape, device=device)
     if not diffusion_on_mask:
-        mask_tensor = (~padding_mask).float()[...,None]
-        perturbed_x = mean_ + std+[:, None, None]*z*mask_tensor # No diffussion on padding value 
-    else:
-        perturbed_x = mean_ + std_[:, None, None]*z
-
+      z = z*mask_tensor
+      
+    # Add noise, scheduled by perturbation kernel, to input
+    perturbed_x = mean_ + std_[:, None, None]*z
+    if not diffusion_on_mask:
+      perturbed_x = perturbed_x*mask_tensor
+      
     # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
     if serialized_model:
         if cp_chunks == 0:
-            scores = model([perturbed_x, random_t, incident_energies, padding_mask])
+            scores = model([perturbed_x, random_t, incident_energies, attn_padding_mask])
         else:
-            scores = checkpoint_sequential(model, cp_chunks, [perturbed_x, random_t, incident_energies, padding_mask])
+            scores = checkpoint_sequential(model, cp_chunks, [perturbed_x, random_t, incident_energies, attn_padding_mask])
     else:
-        scores = model(perturbed_x, random_t, incident_energies, mask=padding_mask)
+        scores = model(perturbed_x, random_t, incident_energies, mask=attn_padding_mask)
     
     # Calculate loss 
-    losses = torch.square(scores*std_[:,None,None] + z)
+    losses = torch.square( scores*std_[:,None,None] + z )
     
-    # Losses across all hits and 4-vectors (normalise by number of hits)
-    losses = torch.mean( losses, dim=(1,2))
+    # Mean of losses across all hits and 4-vectors (normalise by number of hits)
+    # try sum
+    losses = torch.mean( losses, dim=(1,2) )
 
-    # Average across batch
+    # Mean loss for batch
     batch_loss = torch.mean( losses )
     
     return batch_loss
