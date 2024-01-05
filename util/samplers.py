@@ -71,8 +71,8 @@ class pc_sampler:
                 
                 # Input shower = noise * std from SDE
                 if not diffusion_on_mask:
-                    x = x*input_mask
-                    z = z*input_mask
+                    x = x*mask_tensor
+                    z = z*mask_tensor
                 
                 if not self.jupyternotebook:
                     print(f"Sampler step: {time_step:.4f}") 
@@ -92,7 +92,7 @@ class pc_sampler:
                     
                     # Mask Langevin noise
                     if not diffusion_on_mask:
-                        noise = noise*input_mask
+                        noise = noise*mask_tensor
                         
                     # Step size calculation: snr * ratio of gradients in noise / prediction used to calculate
                     flattened_scores = grad.reshape(grad.shape[0], -1)
@@ -116,7 +116,7 @@ class pc_sampler:
                 drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
                 x_mean = x - drift*step_size
                 if not diffusion_on_mask:
-                    x_mean = x_mean*input_mask
+                    x_mean = x_mean*mask_tensor
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
                  
                 # Store distributions at different stages of diffusion (for visualisation purposes only)

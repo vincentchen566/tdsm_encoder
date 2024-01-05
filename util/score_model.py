@@ -70,6 +70,7 @@ class Block(nn.Module):
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
         self.norm3 = nn.LayerNorm(embed_dim)
+        self.norm4 = nn.LayerNorm(embed_dim)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
@@ -93,34 +94,7 @@ class Block(nn.Module):
         x = self.norm3(x)
         ffnn_out = self.ffnn(x)
         x = x + self.dropout3(ffnn_out)
-        x = self.norm3(x)
-        return x
-
-class EncoderBlock(nn.Module):
-    def __init__(self, embed_dim, n_heads, hidden_dim, dropout=0.2):
-        super().__init__()
-        self.attn = nn.MultiheadAttention(embed_dim, n_heads, batch_first=True)
-        self.ffnn = nn.Sequential(
-            nn.Linear(embed_dim, hidden_dim),
-            nn.Dropout(dropout),
-            nn.GELU(),
-            nn.Linear(hidden_dim, embed_dim)
-        )
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-
-    def forward(self, x, src_key_padding_mask=None):
-
-        attn_out = self.attn(x, x, x, key_padding_mask=src_key_padding_mask)[0]
-
-        x = x + self.dropout1(attn_out)
-        x = self.norm2(x)
-        ffnn_out = self.ffnn(x)
-        x = x + self.dropout2(ffnn_out)
-        x = self.norm2(x)
-
+        x = self.norm4(x)
         return x
 
 class Gen(nn.Module):
@@ -139,6 +113,7 @@ class Gen(nn.Module):
         # Embedding: size of input (n_feat_dim) features -> size of output (embed_dim)
         self.embed = nn.Linear(n_feat_dim, embed_dim)
         # Seperate embedding for (time/incident energy) conditional inputs (small NN with fixed weights)
+        self.embed_e = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
         self.embed_t = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
         # Boils embedding down to single value
         self.dense_t = Dense(embed_dim, 1)
@@ -178,8 +153,7 @@ class Gen(nn.Module):
         # Embed 'time' condition
         embed_t_ = self.act_sig( self.embed_t(t) )
         # Embed incident particle energy
-        embed_e_ = self.embed_t(e)
-        embed_e_ = self.act_sig(embed_e_)
+        embed_e_ = self.act_sig( self.embed_e(e) )
         # 'class' token (mean field)
         x_cls = self.cls_token.expand(x.size(0), 1, -1)
         
@@ -190,7 +164,6 @@ class Gen(nn.Module):
             x += self.dense_e(embed_e_).clone()
             # Each encoder block takes previous blocks output as input
             x = layer(x, x_cls, mask) # Block layers 
-            #x = layer(x, mask) # EncoderBlock layers
         
         # Rescale models output (helps capture the normalisation of the true scores)
         mean_ , std_ = self.marginal_prob_std(x,t)
@@ -266,7 +239,6 @@ class Transformer_Block(nn.Module):
 
         return [x, t, e, x_cls, src_key_padding_mask]
 
-
 class Embed_Block(nn.Module):
     def __init__(self, n_feat_dim, embed_dim, hidden_dim, **kwargs):
         super().__init__()
@@ -340,7 +312,7 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, ep
     
     # Mask to avoid perturbing padded entries
     #input_mask = (x[:,:,0] != 0).unsqueeze(-1)
-    mask_tensor = (~padding_mask).float()[...,None]
+    mask_tensor = (~attn_padding_mask).float()[...,None]
     
     # Calculate mean and standard deviation of the perturbation kernel
     mean_, std_ = marginal_prob_std(x,random_t)
