@@ -130,8 +130,7 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
                 mem_log = mem_log_
                 df = pd.DataFrame(mem_log)
                 print(df)
-                util.memory.plot_mem(df, exps=['baseline'], output_file='baseline_memory_plot.png', normalize_mem_all=False, normalize_call_idx=False, time=process_time_batch, batch_size=batch_size)
-                return #TODO: Debugging
+                util.memory.plot_mem(df, exps=['baseline'], output_file=os.path.join(output_directory, 'baseline_memory_plot.png'), normalize_mem_all=False, normalize_call_idx=False, time=process_time_batch, batch_size=batch_size)
 
 
         # Testing on subset of file
@@ -140,7 +139,7 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
                 model.eval()
                 shower_data = shower_data.to(device)
                 incident_energies = incident_energies.to(device)
-                test_loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff)
+                test_loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model)
                 cumulative_test_epoch_loss+=float(test_loss)
 
     # Calculate average loss per epoch
