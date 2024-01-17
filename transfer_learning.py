@@ -409,7 +409,7 @@ def training(padding_value,
             indices = indices,
             output_directory=performance_output_directory)
   performance_score = evaluator.evulate_score(model = model, indices = indices, output_directory=performance_output_directory)
-  print(colored('accuracy score (maximum 1.0, meaning the classifer can fully distinguish gen & geant4 data): {}'.format(performancei_score), 'green'))
+  print(colored('accuracy score (maximum 1.0, meaning the classifer can fully distinguish gen & geant4 data): {}'.format(performance_score), 'green'))
 
 if __name__ == '__main__':
 
