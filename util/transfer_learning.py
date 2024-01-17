@@ -18,6 +18,7 @@ from IPython import display
 from datasets.pad_events_threshold import transform_hit_e
 import pandas as pd 
 from torch.utils.checkpoint import checkpoint_sequential
+from termcolor import colored
 
 def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, threshold_value = -0.1, device='cpu', notebook=False, cls_ffnn=False, mask_diff=False, postfix_='', serialized_model=False, cp_chunks=0):
 
@@ -177,6 +178,7 @@ def transfer_learning(workingdir, preproc_dataset_name, files_list_, initial_lr,
   model_tmp = model
   optimiser_tmp = optimiser
   scheduler_tmp = scheduler
+  print(colored('check point number:{}'.format(cp_chunks), 'green'))
   for idx, threshold in enumerate(transfer_learning_series):
     model_tmp, optimiser_tmp, scheduler_tmp = training(workingdir, preproc_dataset_name + "_threshold" + str(threshold), files_list_, optimiser.param_groups[0]['lr'], n_epochs[idx], train_ratio, batch_size, model_tmp, optimiser_tmp, scheduler_tmp, marginal_prob_std_fn, padding_value, threshold, device=device, notebook = notebook, mask_diff=mask_diff, postfix_=postfix_, serialized_model=serialized_model, cp_chunks=cp_chunks)
   return model_tmp
