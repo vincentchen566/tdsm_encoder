@@ -8,13 +8,16 @@ import torch.nn as nn
 from torch.optim import Adam
 import matplotlib.pyplot as plt
 import util.score_model
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 from scipy.stats import chisquare
 from util.XMLHandler import XMLHandler
 import math
 import tqdm
-
-def digitize(tensor, bin_edges, device, middle='true', dtype=torch.float32):
+import seaborn as sn
+import pandas as pd
+from util.pretty_confusion_matrix import pp_matrix
+def digitize(tensor
+        , bin_edges, device, middle='true', dtype=torch.float32):
     bin_edges = torch.tensor(bin_edges, device=torch.device(device))
     bin_indices = torch.bucketize(tensor, bin_edges)
     bin_indices[bin_indices >= len(bin_edges)] = len(bin_edges)-1
@@ -140,7 +143,7 @@ class evaluate_dataset(Dataset):
   def __len__(self):
     return len(self.data)
 
-  def padding(self, value = -20):
+  def padding(self, value = 0):
 
     for showers in self.data:
         if len(showers) > self.max_nhits:
@@ -305,7 +308,8 @@ class evaluator:
                     model=None,
                     indices = [0,1,2,3],
                     batch_size = 150,
-                    mask = True):
+                    mask = True,
+                    output_directory = './'):
     if model is None:
         model = self.model
     indices = torch.tensor(indices,device=self.device)
@@ -325,7 +329,12 @@ class evaluator:
             else:
                 res_true_valid = torch.cat((res_true_valid, target), 0)
                 res_pred_valid = torch.cat((res_pred_valid, pred),  0)
-
+    confusion_Matrix =  confusion_matrix(res_true_valid.cpu(), res_pred_valid.cpu()) 
+    df_cm = pd.DataFrame(confusion_Matrix, index = ['Gen', 'Geant'], columns = ['Gen', 'Geant'])
+    plt.figure(figsize = (10,7))
+   # sn.heatmap(df_cm, annot=True)
+    pp_matrix(df_cm, cmap='Blues')
+    plt.savefig(os.path.join(output_directory, 'confusion_matrix.png'))
     return (accuracy_score(res_true_valid.cpu(), res_pred_valid.cpu()))
 
   def draw_distribution(self, output_directory='./'):

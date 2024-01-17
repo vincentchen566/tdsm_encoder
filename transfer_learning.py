@@ -105,7 +105,7 @@ def training(padding_value,
   while serialized_model and Tune_cp_chunks:
     custom_data = util.data_utils.cloud_dataset(files_list_[0], device=device)
     try:
-        for i, (shower_data, incident_energies) in enumerate(DataLoader(custom_data, batch_size=int(batch_size*1.1))): # Preserve 10% memory to buffer
+        for i, (shower_data, incident_energies) in enumerate(DataLoader(custom_data, batch_size=int(batch_size*1.2))): # Preserve 20% memory to buffer
             shower_data.to(device)
             model.to(device, shower_data.dtype)
             incident_energies = incident_energies.to(device)
@@ -115,12 +115,12 @@ def training(padding_value,
             print(loss)
             break
     except Exception as error:
-        print(colored('[Error Occur] {}'.format(error), 'red'))
+        print(colored('[Error Occur] {}'.format(error), 'yellow'))
         if 'CUDA out of memory' in str(error):
             cp_chunks += 1
             print(colored("[Solution] Tune gradient check point number from %d to %d"%(cp_chunks-1, cp_chunks), 'blue'))
         else:
-            print(colored("[Break] Memory out of use and number of gradient check points already saturated. Please decrease batch size", 'yellow', attrs=['bold']))
+            print(colored("[Break] Memory out of use and number of gradient check points already saturated. Please decrease batch size", 'red', attrs=['bold']))
             return
   torch.no_grad()
   torch.cuda.empty_cache()
@@ -408,7 +408,8 @@ def training(padding_value,
             device = device,
             indices = indices,
             output_directory=performance_output_directory)
-  print(colored('score: {}'.format(evaluator.evulate_score(model   = model, indices = indices)), 'green'))
+  performance_score = evaluator.evulate_score(model = model, indices = indices, output_directory=performance_output_directory)
+  print(colored('accuracy score (maximum 1.0, meaning the classifer can fully distinguish gen & geant4 data): {}'.format(performancei_score), 'green'))
 
 if __name__ == '__main__':
 
