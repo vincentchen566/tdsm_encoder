@@ -9,7 +9,7 @@ from torch.optim import Adam, RAdam
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 from prettytable import PrettyTable
-import util.data_utils, util.display, util.score_model, util.sdes, util.transfer_learning, util.samplers
+import util.data_utils, util.display, util.score_model, util.sdes, util.transfer_learning, util.samplers, util.Evaluate
 from pickle import load
 from IPython import display
 import optparse, argparse
@@ -161,6 +161,7 @@ def training(padding_value,
   ################
 
   output_directory = os.path.join(working_dir, 'record_' + postfix_, 'sampling')
+  sampling_output_directory = output_directory
   if not os.path.exists(output_directory):
     os.makedirs(output_directory)
   geant_hit_energies = []
@@ -180,7 +181,7 @@ def training(padding_value,
   shower_counter = 0
 
   sample_ = []
-  sampler = util.samplers.pc_sampler(sde=sde, padding_value=padding_value, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False)
+  sampler = util.samplers.pc_sampler(sde=sde, padding_value=padding_value, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False, serialized_model=serialized_model)
   for file_idx in range(len(files_list_)):
     n_valid_hits_per_shower = np.array([])
     incident_e_per_shower = np.array([])
@@ -375,6 +376,39 @@ def training(padding_value,
   fig.show()
   fig_name = os.path.join(output_directory, 'Geant_Gen_comparison.png')
   fig.savefig(fig_name)
+
+  ############################
+  ##  Performance Checking  ##
+  ############################
+  performance_output_directory = os.path.join(working_dir, 'record_' + postfix_, 'performance')
+  if not os.path.exists(performance_output_directory):
+      os.system('mkdir -p {}'.format(performance_output_directory))
+  # TODO base_dataset from file to list
+  evaluator = util.Evaluate.evaluator(base_dataset_name = files_list_[0],
+                                      gen_dataset_name   = os.path.join(sampling_output_directory, "sample.pt"),
+                                      device = device,
+                                      digitize=False)
+
+  evaluator.draw_distribution(performance_output_directory)
+  indices = [0,1,2,3] # 0: e, 1: x, 2: y, 3:z (choose parameters set used for training)
+  model = util.Evaluate.Classifier(n_dim=len(indices),
+                                   embed_dim=64,
+                                   hidden_dim=64,
+                                   n_layers=2,
+                                   n_layers_cls=1,
+                                   n_heads=2,
+                                   dropout=0)
+
+  evaluator.separate_ttv(0.8,0.1)
+  evaluator.train(
+            model=model,
+            jupyternotebook = False,
+            mask = True,
+            n_epochs = 150,
+            device = device,
+            indices = indices,
+            output_directory=performance_output_directory)
+  print(colored('score: {}'.format(evaluator.evulate_score(model   = model, indices = indices)), 'green'))
 
 if __name__ == '__main__':
 
