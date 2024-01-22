@@ -2,7 +2,7 @@ import functools, torch, tqdm
 import numpy as np
 
 class pc_sampler:
-    def __init__(self, sde, padding_value, snr=0.2, sampler_steps=100, steps2plot=(), device='cuda', eps=1e-3, jupyternotebook=False):
+    def __init__(self, sde, padding_value, snr=0.2, sampler_steps=100, steps2plot=(), device='cuda', eps=1e-3, jupyternotebook=False, serialized_model=False):
         ''' Generate samples from score based models with Predictor-Corrector method
             Args:
             score_model: A PyTorch model that represents the time-dependent score-based model.
@@ -37,7 +37,7 @@ class pc_sampler:
         self.av_x_stages = { x:[] for x in self.steps2plot}
         self.av_y_stages = { x:[] for x in self.steps2plot}
         self.incident_e_stages = { x:[] for x in self.steps2plot}
-
+        self.serialized_model = serialized_model
     def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
         
         # Padding masks defined by initial # hits / zero padding
@@ -83,7 +83,10 @@ class pc_sampler:
                 # Corrector step (Langevin MCMC)
                 # Noise to add to input
                 # Conditional score prediction gives estimate of noise to remove
-                grad = score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
+                if self.serialized_model:
+                    grad = score_model([x, batch_time_step, sampled_energies, attn_padding_mask])
+                else:
+                    grad = score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
                 
                 nc_steps = 100
                 for n_ in range(nc_steps):
@@ -113,7 +116,10 @@ class pc_sampler:
                 # Euler-Maruyama Predictor
                 # Adjust inputs according to scores
                 drift, diff = self.diffusion_coeff_fn(x,batch_time_step)
-                drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
+                if self.serialized_model:
+                    drift = drift - (diff**2)[:, None, None] * score_model([x, batch_time_step, sampled_energies, attn_padding_mask])
+                else:
+                    drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
                 x_mean = x - drift*step_size
                 if not diffusion_on_mask:
                     x_mean = x_mean*mask_tensor

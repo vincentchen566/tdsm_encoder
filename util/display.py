@@ -47,13 +47,13 @@ def plot_loss_vs_epoch(eps_, train_losses, test_losses, odir='', zoom=False):
         z = np.polyfit(eps_zoom, train_loss_zoom, 1)
         trend = np.poly1d(z)
         ax_.plot(eps_zoom,trend(eps_zoom), c='black', label='trend')
-        fig_.savefig(odir+'loss_v_epoch_zoom.png')
+        fig_.savefig(os.path.join(odir,'loss_v_epoch_zoom.png'))
     else:
-        fig_.savefig(odir+'loss_v_epoch.png')
+        fig_.savefig(os.path.join(odir,'loss_v_epoch.png'))
     
     return
 
-def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot=100, padding_value=0.0, batch_size=1, energy_trans=False):
+def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot=100, padding_value=0.0, batch_size=1, energy_trans=False, masking=False):
     
     '''
     files_ = can be a list of input files or a cloud dataset object
@@ -112,8 +112,9 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 incident_energies = incident_energies.cpu().numpy().copy()
                 
                 # Mask for padded values
-                mask = ~(data_np[:,:,0] <= 0.01)
-                
+               # mask = ~(data_np[:,:,0] <= 0.01)
+                mask = ~(data_np[:,:,0] == padding_value)
+
                 incident_energies = np.array(incident_energies).reshape(-1,1)
                 incident_energies = incident_energies.flatten().tolist()
                 
@@ -125,7 +126,8 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     
                     # Only use non-padded values for plots
                     valid_hits = data_np[j]#[mask[j]]
-                    
+                    if masking:
+                        valid_hits = data_np[j][mask[j]]
                     # To transform back to original energies for plots
                     all_e = np.array(valid_hits[:,0]).reshape(-1,1)
                     all_x = np.array(valid_hits[:,1]).reshape(-1,1)
@@ -167,8 +169,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             data_np = shower_data.cpu().numpy().copy()
             energy_np = incident_energies.cpu().numpy().copy()
             
-            mask = ~(data_np[:,:,0] <= 0.01)
-            
+            mask = ~(data_np[:,:,0] == padding_value)
             # For each shower in batch
             for j in range(len(data_np)):
                 if shower_counter >= nshowers_2_plot:
@@ -176,7 +177,8 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                     
                 shower_counter+=1
                 valid_hits = data_np[j]#[mask[j]]
-                
+                if masking:
+                    valid_hits = data_np[j][mask[j]]
                 # To transform back to original energies for plots                    
                 all_e = np.array(valid_hits[:,0]).reshape(-1,1)
                 all_x = np.array(valid_hits[:,1]).reshape(-1,1)
@@ -192,7 +194,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
                 shower_hit_y.extend( all_y )
                 all_z.extend( ((valid_hits).copy()[:,3]).flatten().tolist() )
                 
-                shower_hit_ine.extend( [incident_energies[j] for x in valid_hits[:,0]] )
+                shower_hit_ine.extend( [energy_np[j] for x in valid_hits[:,0]] ) #Use CPU version of incident_energies
                 
                 # Number of valid hits
                 entries.extend( [len(valid_hits)] )

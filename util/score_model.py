@@ -217,6 +217,7 @@ class Transformer_Block(nn.Module):
         e = input_[2]
         x_cls = input_[3]
         src_key_padding_mask = input_[4]
+        original_t = input_[5]
         # Mean-field attention
         # Multiheaded self-attention but replacing query with a single mean field approximator
         # attn (query, key, value, key mask)
@@ -237,7 +238,7 @@ class Transformer_Block(nn.Module):
         x = x + self.dropout3(ffnn_out)
         x = self.norm4(x)
 
-        return [x, t, e, x_cls, src_key_padding_mask]
+        return [x, t, e, x_cls, src_key_padding_mask, original_t]
 
 class Embed_Block(nn.Module):
     def __init__(self, n_feat_dim, embed_dim, hidden_dim, **kwargs):
@@ -258,19 +259,21 @@ class Embed_Block(nn.Module):
         embed_t_ = self.act_sig(self.embed_t(t))
         embed_e_ = self.act_sig(self.embed_e(e))
         x_cls_expand = self.cls_token.expand(x.size(0), 1, -1)
-        return [embed_x_, embed_t_, embed_e_, x_cls_expand, src_key_padding_mask]
+        return [embed_x_, embed_t_, embed_e_, x_cls_expand, src_key_padding_mask, t]
 
 class Output_Block(nn.Module):
     def __init__(self, n_feat_dim, embed_dim, marginal_prob_std):
+        super().__init__()
         self.out = nn.Linear(embed_dim, n_feat_dim)
         self.marginal_prob_std = marginal_prob_std
     def forward(self, input_):
         x = input_[0]
-        t = input_[1]
+        embed_t = input_[1]
         e = input_[2]
         x_cls = input_[3]
         src_key_padding_mask = input_[4]
-        mean_ , std_ = self.marginal_prob_std(x,t)
+        original_t = input_[5]
+        mean_ , std_ = self.marginal_prob_std(x,original_t)
         output = self.out(x) / std_[:, None, None]
         return output
 
