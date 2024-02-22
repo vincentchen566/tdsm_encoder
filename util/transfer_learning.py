@@ -20,7 +20,7 @@ import pandas as pd
 from torch.utils.checkpoint import checkpoint_sequential
 from termcolor import colored
 
-def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, threshold_value = -0.1, device='cpu', notebook=False, cls_ffnn=False, mask_diff=False, postfix_='', serialized_model=False, cp_chunks=0):
+def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, threshold_value = -0.1, device='cpu', notebook=False, cls_ffnn=False, mask_diff=False, postfix_='', serialized_model=False, cp_chunks=0, continue_=False):
 
   torch.cuda.empty_cache()
   output_directory = os.path.join(workingdir, 'record_'+postfix_, 'training', preproc_dataset_name)
@@ -71,6 +71,10 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
     training_batches_per_epoch = 0
     testing_batches_per_epoch = 0
 
+    already_train = os.path.exists(os.path.join(output_directory,'ckpt_tmp_'+str(epoch)+'.pth'))
+    if (continue_ and already_train):
+      state_dict = torch.load(os.path.join(output_directory,'ckpt_tmp_'+str(epoch)+'.pth'))
+      model.load_state_dict(state_dict)
     # Load files
     for filename in files_list_:
         if not float(threshold_value) < 0:
@@ -94,15 +98,18 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
         for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
             # Move model to device and set dtype as same as data (note torch.double works on both CPU and GPU)
             model.to(device, shower_data.dtype)
-            model.train()
+            if (continue_ and already_train):
+              pass  
+            else:
+              model.train()
+              optimiser.zero_grad()
+
             shower_data = shower_data.to(device)
             incident_energies = incident_energies.to(device)
 
             if len(shower_data) < 1:
                 print('Very few hits in shower: ', len(shower_data))
                 continue
-            # Zero any gradients from previous steps
-            optimiser.zero_grad()
             # Loss average for each batch
             
             # Memory Hook -- Only see first iteration --> 1 iteration = 1 forward + 1 backward in 1 batch
@@ -114,13 +121,19 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
               for _idx, _module in enumerate(model.modules()):
                 util.memory._add_memory_hooks(_idx, _module, mem_log_, exp, hr)
 
-            loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, cp_chunks=cp_chunks)
-            # Accumulate batch loss per epoch
-            cumulative_epoch_loss+=float(loss)
-            # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
-            loss.backward()
-            # Update value of x += -lr * x.grad
-            optimiser.step()
+            if (continue_ and already_train):
+                with torch.no_grad():
+                  model.eval()
+                  loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, cp_chunks=cp_chunks)
+                  cumulative_epoch_loss+=float(loss)
+            else:
+               loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, cp_chunks=cp_chunks)
+               # Accumulate batch loss per epoch
+               cumulative_epoch_loss+=float(loss)
+               # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
+               loss.backward()
+               # Update value of x += -lr * x.grad
+               optimiser.step()
 
             # Memory Hook -- Release
             if len(mem_log) == 0:
@@ -162,8 +175,8 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
         ax[0].legend(loc='upper right')
     if notebook:
       dh.update(fig)
-    if n_epochs%5 == 0:
-        torch.save(model.state_dict(), os.path.join(output_directory,'ckpt_tmp_'+str(epoch)+'.pth'))
+    if epoch % 20 == 0:
+      torch.save(model.state_dict(), os.path.join(output_directory,'ckpt_tmp_'+str(epoch)+'.pth'))
 
 
   fig.savefig(os.path.join(output_directory, 'loss_v_epoch.png'))
@@ -172,12 +185,12 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
   util.display.plot_loss_vs_epoch(eps_, av_training_losses_per_epoch, av_testing_losses_per_epoch, odir=output_directory, zoom=True)
   return model, optimiser, scheduler
 
-def transfer_learning(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, transfer_learning_series, device='cpu', mask_diff=False, notebook=False, postfix_='', serialized_model=False, cp_chunks=0):
+def transfer_learning(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, transfer_learning_series, device='cpu', mask_diff=False, notebook=False, postfix_='', serialized_model=False, cp_chunks=0, continue_=False):
 
   model_tmp = model
   optimiser_tmp = optimiser
   scheduler_tmp = scheduler
   print(colored('check point number:{}'.format(cp_chunks), 'green'))
   for idx, threshold in enumerate(transfer_learning_series):
-    model_tmp, optimiser_tmp, scheduler_tmp = training(workingdir, preproc_dataset_name + "_threshold" + str(threshold), files_list_, optimiser.param_groups[0]['lr'], n_epochs[idx], train_ratio, batch_size, model_tmp, optimiser_tmp, scheduler_tmp, marginal_prob_std_fn, padding_value, threshold, device=device, notebook = notebook, mask_diff=mask_diff, postfix_=postfix_, serialized_model=serialized_model, cp_chunks=cp_chunks)
+    model_tmp, optimiser_tmp, scheduler_tmp = training(workingdir, preproc_dataset_name + "_threshold" + str(threshold), files_list_, optimiser.param_groups[0]['lr'], n_epochs[idx], train_ratio, batch_size, model_tmp, optimiser_tmp, scheduler_tmp, marginal_prob_std_fn, padding_value, threshold, device=device, notebook = notebook, mask_diff=mask_diff, postfix_=postfix_, serialized_model=serialized_model, cp_chunks=cp_chunks, continue_=continue_)
   return model_tmp
