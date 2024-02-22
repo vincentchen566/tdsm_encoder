@@ -20,6 +20,39 @@ def invert_transform_e(e_):
     original_e = np.reshape(original_e,(-1,))
     return original_e
 
+# Pass a list of plots, bins and titles and function will recursively loop through and plot
+class recursive_plot:
+    def __init__(self, n_plots, name1, vals_list, n_bins, titles):
+        '''
+        Plot list of any number plots
+        Args:
+            nplots: number of plots to make
+            name1: save name
+            vals_list: list of lists/arrays of values/datapoints to plot
+            n_bins: number of bins
+            titles: title (or x-axis label) for each histogram
+        '''
+        self.n_plots = n_plots
+        self.fig, self.ax = plt.subplots(1,n_plots, figsize=(25,4))
+        self.fig.suptitle(name1)
+        self.vals_list = vals_list
+        self.n_bins = n_bins
+        self.titles = titles
+    
+    def rec_plot(self):
+        if len(self.vals_list) == 0:
+            return None
+        plot_idx = self.n_plots-len(self.vals_list)
+        self.ax[plot_idx].hist(self.vals_list[0], bins=self.n_bins[0])
+        self.ax[plot_idx].set_xlabel(self.titles[0])
+        self.vals_list.pop(0)
+        self.n_bins.pop(0)
+        self.titles.pop(0)
+        self.rec_plot()
+
+    def save(self, savename):
+        self.fig.savefig(savename)
+        return
 
 def plot_loss_vs_epoch(eps_, train_losses, test_losses, odir='', zoom=False):
     
