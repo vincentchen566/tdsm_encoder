@@ -580,3 +580,29 @@ def make_diffusion_plot(distributions, titles=[], outdir=''):
     fig.savefig(save_name)
 
     return
+
+def make_diffusion_plot_v2(distributions, titles=[], outdir='', steps=[]):
+  for key in distributions:
+    fig = plt.figure(figsize=(50, 10))
+    n_plots = len(steps)
+    axarr = create_axes_diffusion(n_plots)
+    for idx, step in enumerate(steps):
+      xlabel, ylabel = distributions[key][step][0]
+      geant_x, geant_y, gen_x_t, gen_y_t = distributions[key][step][1]
+      x_lim = (min(min(gen_x_t), min(geant_x)), max(max(gen_x_t), max(geant_x)))
+      y_lim = (min(min(gen_y_t), min(geant_y)), max(max(gen_y_t), max(geant_y)))
+      plot_diffusion_xy(
+         axarr[idx],
+         gen_x_t,
+         gen_y_t,
+         geant_x,
+         geant_y,
+         hist_nbins=50,
+         x0_label=xlabel,
+         x1_label=ylabel,
+         name=f't={step} (noisy)',
+         xlim = x_lim,
+         ylim = y_lim
+      )
+    fig.savefig(os.path.join(outdir, '{}_diffusion_2D.png'.format(key)))
+  return

@@ -336,6 +336,8 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, ep
             scores = model([perturbed_x, random_t, incident_energies, attn_padding_mask])
         else:
             scores = checkpoint_sequential(model, cp_chunks, [perturbed_x, random_t, incident_energies, attn_padding_mask])
+
+        #print('test', model([perturbed_x, random_t, incident_energies, attn_padding_mask]), checkpoint_sequential(model, 2, [perturbed_x, random_t, incident_energies, attn_padding_mask]))
     else:
         scores = model(perturbed_x, random_t, incident_energies, mask=attn_padding_mask)
     

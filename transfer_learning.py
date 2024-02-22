@@ -15,6 +15,7 @@ from IPython import display
 import optparse, argparse
 import torch.optim.lr_scheduler as lr_scheduler
 from termcolor import colored
+from collections import OrderedDict
 
 def training(padding_value,
              dataset,
@@ -39,12 +40,18 @@ def training(padding_value,
              sampler_steps,
              n_showers_2_gen,
              serialized_model,
-             cp_chunks):
+             cp_chunks,
+             sampler_batch,
+             sampler_steps2plot,
+             only_sample,
+             continue_):
   
   ###################
   ##  Environment  ##
   ###################
   device = 'cuda' if torch.cuda.is_available() else 'cpu'
+  torch.no_grad()
+  torch.cuda.empty_cache()
   os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:516"
   os.system('nvidia-smi')
   dataset_store_path = os.path.join(dataset_dir, preproc_dataset_name) 
@@ -96,7 +103,7 @@ def training(padding_value,
         model = util.score_model.Gen(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
       else:
         model = util.score_model.get_seq_model(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_attn_heads, dropout_gen, marginal_prob_std=marginal_prob_std_fn)
-      torch.save(model.state_dict(), initial_model)
+      torch.save(model.state_dict(), os.path.join(working_dir, initial_model))
 
   ######################
   ##  Memory Control  ##
@@ -151,11 +158,18 @@ def training(padding_value,
   print(table)
   print(f'Sum of trainable parameters: {t_params}')
 
-  model_final = util.transfer_learning.transfer_learning(working_dir, preproc_dataset_name, files_list_, initial_lr,
+  if not only_sample:
+    model_final = util.transfer_learning.transfer_learning(working_dir, preproc_dataset_name, files_list_, initial_lr,
                                            n_epochs, train_ratio, batch_size, model, optimiser, scheduler,
                                            marginal_prob_std_fn, padding_value, transfer_learning_series=transfer_learning_series,
                                            device=device, mask_diff=mask_diff, postfix_=postfix_, 
-                                           serialized_model=serialized_model, cp_chunks=cp_chunks)
+                                           serialized_model=serialized_model, cp_chunks=cp_chunks, continue_=continue_)
+  else:
+    model_final_name = os.path.join(working_dir, 'record_' + postfix_, 'training', 'tanh_transform_threshold' + str(transfer_learning_series[-1]), "ckpt_tmp_{}.pth".format(n_epochs[-1]-1))
+    state_dict = torch.load(model_final_name)
+    model.load_state_dict(state_dict)
+    model_final = model
+    model_final.to(device)
   ################
   ##  Sampling  ##
   ################
@@ -181,7 +195,7 @@ def training(padding_value,
   shower_counter = 0
 
   sample_ = []
-  sampler = util.samplers.pc_sampler(sde=sde, padding_value=padding_value, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False, serialized_model=serialized_model)
+  sampler = util.samplers.pc_sampler(sde=sde, padding_value=padding_value, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False, serialized_model=serialized_model, steps2plot=sampler_steps2plot)
   for file_idx in range(len(files_list_)):
     n_valid_hits_per_shower = np.array([])
     incident_e_per_shower = np.array([])
@@ -252,7 +266,7 @@ def training(padding_value,
     gen_hits = util.data_utils.cloud_dataset(os.path.join(working_dir, 'tmp.pt'), device=device)
     gen_hits.max_nhits = max_hits
     gen_hits.padding(value=padding_value)
-    gen_hits_loader = DataLoader(gen_hits, batch_size=batch_size, shuffle=False)
+    gen_hits_loader = DataLoader(gen_hits, batch_size=sampler_batch, shuffle=False)
     os.system('rm {}'.format(os.path.join(working_dir, 'tmp.pt')))
 
     sample = []
@@ -377,6 +391,23 @@ def training(padding_value,
   fig_name = os.path.join(output_directory, 'Geant_Gen_comparison.png')
   fig.savefig(fig_name)
 
+  diffusion_plot = dict()
+  diffusion_plot["ShowerAvgXvsShowerAvgY"] = OrderedDict()
+  diffusion_plot["ShowerAvgXvsDepEnergy"]  = OrderedDict()
+  print(sampler.av_x_stages)
+  for step in sampler_steps2plot:
+    diffusion_plot["ShowerAvgXvsShowerAvgY"][step] = [('Shower Average X', 'Shower Average Y'),
+                                                      (average_x_shower_geant, average_y_shower_geant,
+                                                      sampler.av_x_stages[step],
+                                                      sampler.av_y_stages[step])]
+    diffusion_plot["ShowerAvgXvsDepEnergy"][step]  = [('Shower Average X', 'Total deposited energy'),
+                                                      (average_x_shower_geant, all_hit_ine_geant,
+                                                       sampler.av_x_stages[step],
+                                                       sampler.deposited_energy_stages[step])]
+
+  util.display.make_diffusion_plot_v2(diffusion_plot, titles=[], outdir=output_directory, steps=sampler_steps2plot)
+
+
   ############################
   ##  Performance Checking  ##
   ############################
@@ -438,7 +469,11 @@ if __name__ == '__main__':
   parser.add_argument('--transfer_learning_series', dest='transfer_learning_series', default=[-0.1], nargs='+')
   parser.add_argument('--postfix', dest='postfix', default='test', type=str)
   parser.add_argument('--sampler_steps', dest='sampler_steps', default=200, type=int)
+  parser.add_argument('--sampler_steps2plot', dest='sampler_steps2plot', default=[], nargs='+', type=int)
+  parser.add_argument('--sampler_batch', dest='sampler_batch', default=512, type=int)
   parser.add_argument('--n_showers_2_gen', dest='n_showers_2_gen', default=500, type=int)
+  parser.add_argument('--only_sample', action='store_true')
+  parser.add_argument('--continue_', action='store_true')
   args = parser.parse_args()
 
   padding_value = args.padding_value
@@ -465,6 +500,8 @@ if __name__ == '__main__':
   n_showers_2_gen = args.n_showers_2_gen
   serialized_model = args.serialized_model
   cp_chunks     = args.cp_chunks
+  sampler_steps2plot = args.sampler_steps2plot
+  only_sample   = args.only_sample
 
   print('series', transfer_learning_series)
   training(padding_value,
@@ -490,4 +527,8 @@ if __name__ == '__main__':
              sampler_steps = sampler_steps,
              n_showers_2_gen = n_showers_2_gen,
              serialized_model=serialized_model,
-             cp_chunks=cp_chunks) 
+             cp_chunks=cp_chunks,
+             sampler_batch=args.sampler_batch,
+             sampler_steps2plot=sampler_steps2plot,
+             only_sample = only_sample,
+             continue_ = args.continue_) 

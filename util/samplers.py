@@ -156,7 +156,6 @@ class pc_sampler:
                         all_y = all_y.flatten().tolist()
                         step_hit_y.extend(all_y)
                         step_av_y_pos.extend( [av_y_position] )
-                    
                     self.incident_e_stages[diffusion_step_].extend(step_incident_e)
                     self.hit_energy_stages[diffusion_step_].extend(step_hit_e)
                     self.hit_x_stages[diffusion_step_].extend(step_hit_x)
