@@ -1,5 +1,5 @@
 import torch, sys, os
-import util.data_utils as utils
+import data_utils as utils
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.colorbar import ColorbarBase
@@ -12,7 +12,6 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import RobustScaler, PowerTransformer, minmax_scale
 from pickle import load
 from matplotlib import cm
-sys.path.insert(1, '../')
 
 def invert_transform_e(e_):
     original_e = 0.5 * np.log( (1+np.array(e_)) / (1-np.array(e_)) )

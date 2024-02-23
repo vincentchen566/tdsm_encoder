@@ -6,9 +6,9 @@ from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import RobustScaler, PowerTransformer, QuantileTransformer, MinMaxScaler
 from pickle import dump
-sys.path.insert(1, '../')
-import util.data_utils as utils
-import util.display
+sys.path.insert(1, '../util')
+import data_utils as utils
+import display
 
 #def transform_hit_e(hit_energies):
 #    new_e = -(1/15.)*np.log(hit_energies/(1+hit_energies))
