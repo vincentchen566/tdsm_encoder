@@ -10,27 +10,13 @@ sys.path.insert(1, '../util')
 import data_utils as utils
 import display
 
-#def transform_hit_e(hit_energies):
-#    new_e = -(1/15.)*np.log(hit_energies/(1+hit_energies))
-#    new_e = np.nan_to_num(new_e)
-#    new_e = np.reshape(new_e,(-1,))
-#    return new_e
-
 def transform_hit_e(x_, ine_):
-    #y_ = -(1/ine_)*torch.log(x_)
-    #return y_
+    # alpha and ine multiplier used to ensure hit energy > 0
     alpha = 1e-06
-    t_ = (alpha+(1-(2*alpha)) )
-    y_ = t_ * x_/(2*ine_)
+    t_ = 1-alpha
+    y_ = t_ * x_/(8*ine_)
     rescaled_e = -(1/5)*torch.log(y_/(1-y_))
     return rescaled_e
-
-# Sigmoid with reduced gradient for hit positions transformation
-#def transform_hit_xy(hit_pos):
-#    new_pos = 1/(1+np.exp(-0.04*hit_pos))
-#    new_pos = np.nan_to_num(new_pos)
-#    new_pos = np.reshape(new_pos,(-1,))
-#    return new_pos
 
 def transform_hit_xy(x_):
     max_xy = 40
@@ -38,23 +24,9 @@ def transform_hit_xy(x_):
     y_ = (x_-min_xy)/(max_xy-min_xy)
     return y_
 
-# Min max for z layer
-#def transform_hit_z(z_):
-#    maxz_ = np.max(z_)
-#    minz_ = np.min(z_)
-#    z_ = (z_ - minz_) / (maxz_ - minz_)
-#    return z_
-
 def transform_hit_z(z_):
-    z_ = z_ / 40
+    z_ = (z_ / 45)+0.5
     return z_
-
-# Min-max incident energy transformation
-#def transform_incident_energy(ine_):
-#    maxe_ = np.max(ine_)
-#    mine_ = np.min(ine_)
-#    new_ine = (ine_ - mine_) / (maxe_ - mine_)
-#    return new_ine
 
 def transform_ine(ine_):
     new_ine = np.log(ine_)
@@ -74,9 +46,12 @@ def main():
     transform = args.transform
     
     GeV = 1/1000
+
+    print('pytorch: ', torch.__version__)
     
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     print('Device: ', device)
+    print(f'pad_events.py: check # cuda devices: {torch.cuda.device_count()} ({torch._C._cuda_getDeviceCount()}), current device: {torch.cuda.current_device()}')
     
     # Fit the transformation functions before adding any padding to the dataset
     E_ = []
@@ -100,8 +75,8 @@ def main():
     if not os.path.exists(odir):
         os.makedirs(odir)
     outfilename = os.path.join(odir,ofile)
-    print(f'infile: {infile}')
-    print(f'ofile: {ofile}')
+    print(f'Input file from: {filename}')
+    print(f'Output file to: {outfilename}')
 
     loaded_file = torch.load(filename)
     showers = loaded_file[0]
@@ -118,9 +93,6 @@ def main():
             max_nhits = shower.shape[0]
 
     # Transform the incident energies
-    #incident_energies = np.asarray( incident_energies ).reshape(-1, 1)
-    #incident_energies = transform_incident_energy(incident_energies)
-    #incident_energies = torch.from_numpy( incident_energies.flatten() )
     original_incident_e = incident_energies.tolist()
     trans_incident_e = transform_ine(original_incident_e)
 
@@ -239,7 +211,7 @@ def main():
     n_plots = len(plots)
     # 9x16 radial x angular / eta x phi bins, 45 layers
     n_bins = [30,30,9,16,45]
-    plotter = util.display.recursive_plot(len(plots), name1, plots, n_bins, titles)
+    plotter = display.recursive_plot(len(plots), name1, plots, n_bins, titles)
     plotter.rec_plot()
 
     # Save file name
