@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import RobustScaler, PowerTransformer, QuantileTransformer, MinMaxScaler, FunctionTransformer
+from sklearn.preprocessing import RobustScaler, PowerTransformer, QuantileTransformer, MinMaxScaler
 from pickle import dump
 sys.path.insert(1, '../util')
 import data_utils as utils
@@ -31,10 +31,6 @@ def transform_hit_z(z_):
 def transform_ine(ine_):
     new_ine = np.log(ine_)
     return new_ine
-
-
-
-
 
 def main():
     usage=''
@@ -228,4 +224,3 @@ def main():
 
 if __name__=='__main__':
     main()
-    
