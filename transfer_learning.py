@@ -16,6 +16,8 @@ import optparse, argparse
 import torch.optim.lr_scheduler as lr_scheduler
 from termcolor import colored
 from collections import OrderedDict
+import util.Convertor
+from datasets.pad_events_threshold import Preprocessor
 
 def training(padding_value,
              dataset,
@@ -44,7 +46,9 @@ def training(padding_value,
              sampler_batch,
              sampler_steps2plot,
              only_sample,
-             continue_):
+             continue_,
+             minEntry,
+             maxEntry):
   
   ###################
   ##  Environment  ##
@@ -91,8 +95,14 @@ def training(padding_value,
   #################
   files_list_ = []
   for filename in os.listdir(dataset_store_path):
-    if fnmatch.fnmatch(filename, dataset + keyword):
+    if not '.pt' in filename: continue
+    Entries = (filename.replace('dataset_2_padded_nentry','').replace('.pt','')).split('To')
+    minEntry_f = int(Entries[0])
+    maxEntry_f = int(Entries[1])
+    if( ((minEntry_f <= minEntry) and (minEntry <= maxEntry_f)) or ((minEntry <= minEntry_f) and (maxEntry_f <= maxEntry)) or ((minEntry_f <= maxEntry) and (maxEntry <= maxEntry_f)) ):
       files_list_.append(os.path.join(dataset_store_path, filename))
+  #  if fnmatch.fnmatch(filename, dataset + keyword):
+  #    files_list_.append(os.path.join(dataset_store_path, filename))
   print('file list: ', files_list_)
 
   #####################
@@ -109,9 +119,10 @@ def training(padding_value,
   ##  Memory Control  ##
   ######################
   Tune_cp_chunks = True
-  while serialized_model and Tune_cp_chunks:
-    custom_data = util.data_utils.cloud_dataset(files_list_[0], device=device)
-    try:
+  while serialized_model and Tune_cp_chunks and not only_sample:
+    for file_ in files_list_:
+      custom_data = util.data_utils.cloud_dataset(file_, device=device)
+      try:
         for i, (shower_data, incident_energies) in enumerate(DataLoader(custom_data, batch_size=int(batch_size*1.2))): # Preserve 20% memory to buffer
             shower_data.to(device)
             model.to(device, shower_data.dtype)
@@ -119,9 +130,8 @@ def training(padding_value,
             # Loss average for each batch
             loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, serialized_model=serialized_model, cp_chunks=cp_chunks)
             Tune_cp_chunks = False
-            print(loss)
             break
-    except Exception as error:
+      except Exception as error:
         print(colored('[Error Occur] {}'.format(error), 'yellow'))
         if 'CUDA out of memory' in str(error):
             cp_chunks += 1
@@ -188,19 +198,33 @@ def training(padding_value,
   N_geant_showers = 0
 
   n_files = len(files_list_)
-  nshowers_per_file = [n_showers_2_gen//n_files for x in range(n_files)] #TODO: not true if we have multiple files
-  r_ =  n_showers_2_gen % nshowers_per_file[0]
-  nshowers_per_file[-1] += r_
+  n_showers_per_file = []
+  total_showers = 0
+  for file_idx in range(len(files_list_)):
+    loaded_file = torch.load(files_list_[file_idx], map_location=torch.device(device))
+    n_showers = len(loaded_file[0])
+    del loaded_file
+    n_showers_per_file.append(n_showers)
+    total_showers += n_showers
+  
+  nshowers_per_file = [int(n_showers_2_gen * n_showers_per_file[idx] / float(total_showers)) for idx in range(n_files - 1)]
+  nshowers_per_file.append(int(n_showers_2_gen - np.sum(n_showers_per_file)))
+
+#  nshowers_per_file = [n_showers_2_gen//n_files for x in range(n_files)] #TODO: not true if we have multiple files
+#  r_ =  n_showers_2_gen % nshowers_per_file[0]
+#  nshowers_per_file[-1] += r_
   print(f'# showers per file: {nshowers_per_file}')
   shower_counter = 0
 
   sample_ = []
+  refered_  = []
   sampler = util.samplers.pc_sampler(sde=sde, padding_value=padding_value, snr=0.16, sampler_steps=sampler_steps, device=device, jupyternotebook=False, serialized_model=serialized_model, steps2plot=sampler_steps2plot)
+
+
   for file_idx in range(len(files_list_)):
     n_valid_hits_per_shower = np.array([])
-    incident_e_per_shower = np.array([])
-  
-    max_hits = -1
+    incident_e_per_shower   = np.array([])
+    max_hits = -1 
     file = files_list_[file_idx]
     print(f'file: {file}')
     shower_counter = 0
@@ -215,6 +239,7 @@ def training(padding_value,
       masking     = data_np[:,:,0] != padding_value
       for j in range(len(data_np)):
         valid_hits = data_np[j]
+        refered_.append(torch.tensor(valid_hits))
         n_valid_hits = data_np[j][masking[j]]
         if len(valid_hits) > max_hits:
           max_hits = len(valid_hits)
@@ -254,12 +279,14 @@ def training(padding_value,
 
     n_bins_prob_dist = 20
     e_vs_nhits_prob, x_bin, y_bin = util.samplers.get_prob_dist(incident_e_per_shower, n_valid_hits_per_shower, n_bins_prob_dist)
-
-    in_energies = torch.from_numpy(np.random.choice( incident_e_per_shower, nshowers_per_file[file_idx]))
+    in_energies = torch.from_numpy(incident_e_per_shower)
+#    in_energies = torch.from_numpy(np.random.choice( incident_e_per_shower, nshowers_per_file[file_idx]))
     if file_idx ==0:
       sampled_ine = in_energies
+      refered_ine = in_energies
     else:
       sampled_ine = torch.cat([sampled_ine, in_energies])
+      refered_ine = torch.cat([refered_ine, in_energies])
 
     nhits, gen_hits = util.samplers.generate_hits(e_vs_nhits_prob, x_bin, y_bin, in_energies, 4, device=device)
     torch.save([gen_hits, in_energies], os.path.join(working_dir, 'tmp.pt'))
@@ -289,6 +316,16 @@ def training(padding_value,
       tmp_sample = sample_np[i]
       sample_.append(torch.tensor(tmp_sample))
   torch.save([sample_, sampled_ine], os.path.join(output_directory, 'sample.pt'))
+  torch.save([refered_, refered_ine], os.path.join(output_directory, 'refered.pt'))
+#  preprocessor_file = '/eos/user/t/tihsu/database/ML_hackthon/pad_tensor_transformed/tanh_transform/dataset_2_padded_nentry1129To1269_preprocessor.pkl'
+#  Converter_ = util.Convertor.Convertor(os.path.join(output_directory, 'sample.pt'), 0.0, preprocessor=preprocessor_file)
+#  Converter_.invert(-99)
+#  Converter_.digitize()
+#  Converter_.to_h5py(os.path.join(output_directory, 'Gen.hdf5'))
+#  Converter_ = util.Convertor.Convertor(os.path.join(output_directory, 'refered.pt'), 0.0, preprocessor=preprocessor_file)
+#  Converter_.invert(-99)
+#  Converter_.digitize()
+#  Converter_.to_h5py('Geant4.hdf5')
 
   ##############################
   ##  Plot Generative result  ##
@@ -450,14 +487,14 @@ if __name__ == '__main__':
   parser.add_argument('--dataset', dest='dataset', default = 'dataset_2_padded_nentry', type=str)
   parser.add_argument('--preproc_name', dest='preproc_name', default = 'tanh_transform', type=str)
   parser.add_argument('--keyword', dest='keyword', default = '11*.pt', type=str)
-  parser.add_argument('--dataset_dir', dest='dataset_dir', default = '/eos/user/t/tihsu/SWAN_projects/ML_hackthon_transferlearning/tdsm_encoder/datasets/', type=str)
+  parser.add_argument('--dataset_dir', dest='dataset_dir', default = '/eos/user/t/tihsu/database/ML_hackthon/pad_tensor_transformed', type=str)
   parser.add_argument('--working_dir', dest='working_dir', default = './', type=str)
   parser.add_argument('--initial_model', dest='initial_model', default='initial_model.pt', type=str)
   parser.add_argument('--SDE', dest='SDE', default='VP', type=str)
   parser.add_argument('--n_epochs', dest='n_epochs', default=[3], nargs='+', type=int)
-  parser.add_argument('--embed_dim', dest='embed_dim', default=512, type=int)
+  parser.add_argument('--embed_dim', dest='embed_dim', default=16, type=int)
   parser.add_argument('--hidden_dim', dest='hidden_dim', default=128, type=int)
-  parser.add_argument('--num_encoder_blocks', dest='num_encoder_blocks', default=8, type=int)
+  parser.add_argument('--num_encoder_blocks', dest='num_encoder_blocks', default=16, type=int)
   parser.add_argument('--num_attn_heads', dest='num_attn_heads', default=16, type=int)
   parser.add_argument('--dropout_gen', dest='dropout_gen', default=0, type=float)
   parser.add_argument('--mask_diff', action='store_true')
@@ -469,11 +506,14 @@ if __name__ == '__main__':
   parser.add_argument('--transfer_learning_series', dest='transfer_learning_series', default=[-0.1], nargs='+')
   parser.add_argument('--postfix', dest='postfix', default='test', type=str)
   parser.add_argument('--sampler_steps', dest='sampler_steps', default=200, type=int)
-  parser.add_argument('--sampler_steps2plot', dest='sampler_steps2plot', default=[], nargs='+', type=int)
+  parser.add_argument('--sampler_steps2plot', dest='sampler_steps2plot', default=[0], nargs='+', type=int)
   parser.add_argument('--sampler_batch', dest='sampler_batch', default=512, type=int)
   parser.add_argument('--n_showers_2_gen', dest='n_showers_2_gen', default=500, type=int)
   parser.add_argument('--only_sample', action='store_true')
   parser.add_argument('--continue_', action='store_true')
+  parser.add_argument('--minEntry', type=int, default=0)
+  parser.add_argument('--maxEntry', type=int, default=9999)
+
   args = parser.parse_args()
 
   padding_value = args.padding_value
@@ -531,4 +571,6 @@ if __name__ == '__main__':
              sampler_batch=args.sampler_batch,
              sampler_steps2plot=sampler_steps2plot,
              only_sample = only_sample,
-             continue_ = args.continue_) 
+             continue_ = args.continue_,
+             minEntry  = args.minEntry,
+             maxEntry  = args.maxEntry) 
