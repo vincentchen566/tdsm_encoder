@@ -493,6 +493,8 @@ if __name__ == '__main__':
                                                                    target_energies[i])
             which_showers = ((energy >= target_energies[i]) & \
                              (energy < target_energies[i+1])).squeeze()
+            if(len(shower[which_showers]) < 1):
+              continue
             hlf.DrawAverageShower(shower[which_showers],
                                   filename=os.path.join(args.output_dir, filename),
                                   title=plot_title[i])

@@ -16,30 +16,36 @@ import tqdm
 import seaborn as sn
 import pandas as pd
 from util.pretty_confusion_matrix import pp_matrix
-def digitize(tensor
-        , bin_edges, device, middle='true', dtype=torch.float32):
-    bin_edges = torch.tensor(bin_edges, device=torch.device(device))
-    bin_indices = torch.bucketize(tensor, bin_edges)
-    bin_indices[bin_indices >= len(bin_edges)] = len(bin_edges)-1
-    bin_indices[bin_indices == -1] = 0
-    middle_values = (bin_edges[bin_indices] + bin_edges[bin_indices - 1])/2
-    return middle_values
 
-def digitize_input(sample_list, particle, filename, dtype=torch.float32,pad_value=-20):
+def digitize(tensor, bin_edges, device, middle='true', dtype=torch.float32):
+    bin_edges = torch.tensor(bin_edges, device=torch.device(device))
+    bin_indices = torch.bucketize(tensor, bin_edges) - 1
+    bin_indices[bin_indices >= (len(bin_edges)-1)] = len(bin_edges)-2
+    bin_indices[bin_indices == -1] = 0
+    middle_values = (bin_edges[bin_indices] + bin_edges[bin_indices + 1])/2
+    return middle_values, bin_indices
+
+def digitize_input(sample_list, particle, filename, dtype=torch.float32,pad_value=-20, device='cpu'):
     xml = XMLHandler(particle, filename=filename)
     r_edge = xml.r_edges[0]
+    n_r_bin = len(r_edge) - 1
     n_theta_bin = xml.a_bins[0]
-    theta_edge = np.linspace(-math.pi, math.pi, n_theta_bin)
+    theta_edge = np.linspace(-math.pi, math.pi, n_theta_bin+1)
     z_bin = len(xml.r_edges)
     z_edge = np.linspace(-0.5, z_bin - 0.5,z_bin+1)
     trans_event = []
+    trans_event_np = []
     for event in sample_list:
         r = torch.sqrt(event[:,1]*event[:,1] + event[:,2]*event[:,2])
         theta = torch.atan(event[:,2]/event[:,1]) + torch.pi*torch.where(event[:,1]<0, torch.tensor(1, device=torch.device(device))
-                                                                         , torch.tensor(0, device=torch.device(device)))
-        middle_r = digitize(r,r_edge,device)
-        middle_theta = digitize(theta, theta_edge,device)
-        middle_z = digitize(event[:,3],z_edge,device)
+                                                                         , torch.tensor(0, device=torch.device(device))) - 2*torch.pi*torch.where(torch.logical_and(event[:,1]<0, event[:,2]<0),
+                                                                                                                                                  torch.tensor(1, device=torch.device(device)),
+                                                                                                                                                  torch.tensor(0, device=torch.device(device)))
+        middle_r,     r_bin_indices     = digitize(r,r_edge,device)
+        middle_theta, theta_bin_indices = digitize(theta, theta_edge,device)
+        middle_z,     z_bin_indices     = digitize(event[:,3],z_edge,device)
+        bin_indices   = r_bin_indices + theta_bin_indices * n_r_bin + z_bin_indices * n_theta_bin * n_r_bin 
+
         x = middle_r*torch.cos(middle_theta)
         y = middle_r*torch.sin(middle_theta)
         output_ = torch.stack((event[:,0],x,y,middle_z),dim=1)
@@ -54,7 +60,15 @@ def digitize_input(sample_list, particle, filename, dtype=torch.float32,pad_valu
             output_[matching_indices[0],0] = output_[matching_indices,0].sum()
             output_[matching_indices[1:]] = torch.ones(4,device=torch.device(device))*pad_value
         trans_event.append(output_)
-    return trans_event
+
+        bin_indices = bin_indices.cpu().numpy().copy()
+        E_          = output_[:,0].cpu().numpy().copy()
+        mask        = (~(E_ == pad_value)) & (E_ > 0.)
+        event_np = np.zeros((1,n_r_bin * n_theta_bin * z_bin))
+        event_np[0][bin_indices[mask]] = E_[mask]
+        trans_event_np.append(event_np)
+    trans_event_np = np.concatenate(trans_event_np, axis=0)
+    return trans_event, trans_event_np
 
 class attn_cls(nn.Module):
     def __init__(self, embed_dim, num_heads, hidden, dropout):
@@ -130,9 +144,11 @@ class evaluate_dataset(Dataset):
   def __init__(self, data, inE, label, device = 'cpu'):
 
     self.data  = data
+    self.data_np = None
     self.inE   = torch.tensor(inE, device=device)
     self.label = label
     self.max_nhits = -1
+    self.device=device
 
   def __getitem__(self, index):
     x = self.data[index]
@@ -158,8 +174,8 @@ class evaluate_dataset(Dataset):
     self.data = padded_showers
     self.padding_value = value
 
-  def digitize(self, particle='electron',xml_bin='binning_dataset_2.xml'):
-    self.data = digitize_input(self.data, particle, xml_bin)
+  def digitize(self, particle='electron',xml_bin='binning_dataset_2.xml',pad_value=0.0):
+    self.data, self.data_np = digitize_input(self.data, particle, xml_bin, device=self.device, pad_value=pad_value)
 
   def concat(self, dataset2):
 

@@ -1,5 +1,5 @@
 import torch, sys, os
-import data_utils as utils
+import util.data_utils as utils
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.colorbar import ColorbarBase
