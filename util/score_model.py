@@ -7,9 +7,9 @@ import torch.nn.functional as F
 from torch.optim import Adam
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-import util.display
+import display
 import tqdm
-import util.data_utils as utils
+import data_utils as utils
 from collections import OrderedDict
 from torch.utils.checkpoint import checkpoint_sequential
 
@@ -163,7 +163,7 @@ class Gen(nn.Module):
             x += self.dense_t(embed_t_).clone()
             x += self.dense_e(embed_e_).clone()
             # Each encoder block takes previous blocks output as input
-            x = layer(x, x_cls, mask) # Block layers 
+            x = layer(x, x_cls, mask) # Block layers
         
         # Rescale models output (helps capture the normalisation of the true scores)
         mean_ , std_ = self.marginal_prob_std(x,t)
@@ -336,19 +336,83 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, ep
             scores = model([perturbed_x, random_t, incident_energies, attn_padding_mask])
         else:
             scores = checkpoint_sequential(model, cp_chunks, [perturbed_x, random_t, incident_energies, attn_padding_mask])
-
-        #print('test', model([perturbed_x, random_t, incident_energies, attn_padding_mask]), checkpoint_sequential(model, 2, [perturbed_x, random_t, incident_energies, attn_padding_mask]))
     else:
         scores = model(perturbed_x, random_t, incident_energies, mask=attn_padding_mask)
     
-    # Calculate loss 
+    # Calculate the Denoise Score-matching objective
+    # Mean the losses across all hits and 4-vectors (using sum, loss numerical value gets too large)
     losses = torch.square( scores*std_[:,None,None] + z )
-    
-    # Mean of losses across all hits and 4-vectors (normalise by number of hits)
-    # try sum
     losses = torch.mean( losses, dim=(1,2) )
 
     # Mean loss for batch
     batch_loss = torch.mean( losses )
     
     return batch_loss
+
+class ScoreMatchingLoss(nn.Module):
+    """
+    Denoising Score-Matiching Objective function:
+    - Perturbs data points with pre-defined noise distribution
+    - Uses score matching objective to estimate the score of the perturbed data distribution
+    
+    Subclass of nn.Module as is standard practice to inherit methods from nn.Module in pytroch
+    """
+    
+    def __init__(self):
+        # register components of nn.Module to custom loss
+        super(ScoreMatchingLoss, self).__init__()
+        
+    def forward(self, model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False, serialized_model=False, cp_chunks=0):
+        
+        '''
+        Forward method used to calculate value:
+            model: A PyTorch model instance that represents a time-dependent score-based model
+            x: A mini-batch of training data
+            marginal_prob_std: A function that gives the standard deviation of the perturbation kernel
+            eps: A tolerance value for numerical stability
+        '''
+        
+        # Generate padding mask for attention mechanism
+        # Positions with True are ignored while False values will be unchanged
+        attn_padding_mask = (x[:,:,0] == 0).type(torch.bool)
+
+        # Tensor of randomised 'time' steps
+        random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
+
+        # Mask to avoid perturbing padded entries
+        #input_mask = (x[:,:,0] != 0).unsqueeze(-1)
+        mask_tensor = (~attn_padding_mask).float()[...,None]
+
+        # Calculate mean and standard deviation of the perturbation kernel
+        mean_, std_ = marginal_prob_std(x,random_t)
+
+        # Noise
+        z = torch.normal(0,1,size=x.shape, device=device)
+        if not diffusion_on_mask:
+          z = z*mask_tensor
+
+        # Add noise, scheduled by perturbation kernel, to input
+        perturbed_x = mean_ + std_[:, None, None]*z
+        if not diffusion_on_mask:
+          perturbed_x = perturbed_x*mask_tensor
+
+        # Evaluate model (aim: to estimate the score function of each noise-perturbed distribution)
+        if serialized_model:
+            if cp_chunks == 0:
+                scores = model([perturbed_x, random_t, incident_energies, attn_padding_mask])
+            else:
+                scores = checkpoint_sequential(model, cp_chunks, [perturbed_x, random_t, incident_energies, attn_padding_mask])
+        else:
+            scores = model(perturbed_x, random_t, incident_energies, mask=attn_padding_mask)
+
+        # Calculate the Denoise Score-matching objective
+        # Mean the losses across all hits and 4-vectors (using sum, loss numerical value gets too large)
+        losses = torch.square( scores*std_[:,None,None] + z )
+        losses = torch.mean( losses, dim=(1,2) )
+
+        # Mean loss for batch
+        batch_loss = torch.mean( losses )
+
+        return batch_loss
+
+
