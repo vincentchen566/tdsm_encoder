@@ -1,0 +1,15 @@
+train_ratio: 0.9
+batch_size: 128
+lr: 0.003
+epochs: 7
+n_feat_dim: 4
+embed_dim: 200
+hidden_dim: 128
+num_encoder_blocks: 3
+num_attn_heads: 4
+dropout_gen: 0.2
+SDE: "VP"
+sigma_max: 10.0
+sigma_min: 0.01
+sampler_steps: 100
+n_showers_2_gen: 100
