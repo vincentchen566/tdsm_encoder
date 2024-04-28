@@ -20,7 +20,7 @@ import pandas as pd
 from torch.utils.checkpoint import checkpoint_sequential
 from termcolor import colored
 
-def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, threshold_value = -0.1, device='cpu', notebook=False, cls_ffnn=False, mask_diff=False, postfix_='', serialized_model=False, cp_chunks=0, continue_=False):
+def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, threshold_value = -0.1, device='cpu', notebook=False, cls_ffnn=False, mask_diff=False, postfix_='', serialized_model=False, cp_chunks=0, continue_=False, Energy_weighted=False):
 
   torch.cuda.empty_cache()
   output_directory = os.path.join(workingdir, 'record_'+postfix_, 'training', preproc_dataset_name)
@@ -95,7 +95,7 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
         testing_batches_per_epoch += len(shower_loader_test)
 
         # Load shower batch for training
-        for i, (shower_data,incident_energies) in enumerate(shower_loader_train,0):
+        for i, (shower_data,incident_energies, weight) in enumerate(shower_loader_train,0):
             # Move model to device and set dtype as same as data (note torch.double works on both CPU and GPU)
             model.to(device, shower_data.dtype)
             if (continue_ and already_train):
@@ -106,6 +106,7 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
 
             shower_data = shower_data.to(device)
             incident_energies = incident_energies.to(device)
+            weight = weight.to(device)
 
             if len(shower_data) < 1:
                 print('Very few hits in shower: ', len(shower_data))
@@ -121,13 +122,17 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
               for _idx, _module in enumerate(model.modules()):
                 util.memory._add_memory_hooks(_idx, _module, mem_log_, exp, hr)
 
+            weight = weight.unsqueeze(-1)
+            weight_ = torch.concat([torch.ones(weight.size(), device=device)* (1./float(weight.size()[1])), weight, weight, weight], axis = -1)   if Energy_weighted else None
+
             if (continue_ and already_train):
                 with torch.no_grad():
                   model.eval()
-                  loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, cp_chunks=cp_chunks)
+                  loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, cp_chunks=cp_chunks, weight = weight_)
                   cumulative_epoch_loss+=float(loss)
             else:
-               loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, cp_chunks=cp_chunks)
+               
+               loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, cp_chunks=cp_chunks, weight = weight_)
                # Accumulate batch loss per epoch
                cumulative_epoch_loss+=float(loss)
                # collect dL/dx for any parameters (x) which have requires_grad = True via: x.grad += dL/dx
@@ -147,12 +152,16 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
 
 
         # Testing on subset of file
-        for i, (shower_data,incident_energies) in enumerate(shower_loader_test,0):
+        for i, (shower_data,incident_energies, weight) in enumerate(shower_loader_test,0):
             with torch.no_grad():
                 model.eval()
                 shower_data = shower_data.to(device)
                 incident_energies = incident_energies.to(device)
-                test_loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model)
+                weight = weight.to(device)
+                weight = weight.unsqueeze(-1)
+                weight_ = torch.concat([torch.ones(weight.size(), device=device) * (1. / weight.size()[1]), weight, weight, weight], axis = -1)   if Energy_weighted else None
+
+                test_loss = util.score_model.loss_fn(model, shower_data, incident_energies, marginal_prob_std_fn, padding_value, device=device, diffusion_on_mask=mask_diff, serialized_model=serialized_model, weight=weight_)
                 cumulative_test_epoch_loss+=float(test_loss)
 
     # Calculate average loss per epoch
@@ -185,12 +194,12 @@ def training(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs
   util.display.plot_loss_vs_epoch(eps_, av_training_losses_per_epoch, av_testing_losses_per_epoch, odir=output_directory, zoom=True)
   return model, optimiser, scheduler
 
-def transfer_learning(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, transfer_learning_series, device='cpu', mask_diff=False, notebook=False, postfix_='', serialized_model=False, cp_chunks=0, continue_=False):
+def transfer_learning(workingdir, preproc_dataset_name, files_list_, initial_lr, n_epochs, train_ratio, batch_size, model, optimiser, scheduler, marginal_prob_std_fn, padding_value, transfer_learning_series, device='cpu', mask_diff=False, notebook=False, postfix_='', serialized_model=False, cp_chunks=0, continue_=False, Energy_weighted=False):
 
   model_tmp = model
   optimiser_tmp = optimiser
   scheduler_tmp = scheduler
   print(colored('check point number:{}'.format(cp_chunks), 'green'))
   for idx, threshold in enumerate(transfer_learning_series):
-    model_tmp, optimiser_tmp, scheduler_tmp = training(workingdir, preproc_dataset_name + "_threshold" + str(threshold), files_list_, optimiser.param_groups[0]['lr'], n_epochs[idx], train_ratio, batch_size, model_tmp, optimiser_tmp, scheduler_tmp, marginal_prob_std_fn, padding_value, threshold, device=device, notebook = notebook, mask_diff=mask_diff, postfix_=postfix_, serialized_model=serialized_model, cp_chunks=cp_chunks, continue_=continue_)
+    model_tmp, optimiser_tmp, scheduler_tmp = training(workingdir, preproc_dataset_name + "_threshold" + str(threshold), files_list_, optimiser.param_groups[0]['lr'], n_epochs[idx], train_ratio, batch_size, model_tmp, optimiser_tmp, scheduler_tmp, marginal_prob_std_fn, padding_value, threshold, device=device, notebook = notebook, mask_diff=mask_diff, postfix_=postfix_, serialized_model=serialized_model, cp_chunks=cp_chunks, continue_=continue_, Energy_weighted=Energy_weighted)
   return model_tmp

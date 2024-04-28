@@ -37,14 +37,15 @@ class Convertor:
           Y_ = np.asarray((data_[0][:,2])).reshape(-1,1)
           Z_ = np.asarray((data_[0][:,3])).reshape(-1,1)
           inE_ = data_[1]
-          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.inverse_transform_hit(E_, X_, Y_, Z_, self.padding_value, new_padding_value)
           new_inE_ = self.preprocessor.inverse_transform_incident_energy(inE_)
+          new_inE_ = new_inE_.item()
+          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.inverse_transform_hit(E_, X_, Y_, Z_, new_inE_, self.padding_value, new_padding_value)
           new_E_ = torch.from_numpy( new_E_.flatten())
           new_X_ = torch.from_numpy( new_X_.flatten())
           new_Y_ = torch.from_numpy( new_Y_.flatten())
           new_Z_ = torch.from_numpy( new_Z_.flatten())
           invert_data.append(torch.stack((new_E_, new_X_, new_Y_, new_Z_),-1))
-          invert_inE.append(new_inE_.item())
+          invert_inE.append(new_inE_)
 
         self.dataset.data = invert_data
         self.dataset.inE  = torch.tensor(invert_inE, device=self.device)
@@ -59,8 +60,8 @@ class Convertor:
           Y_ = np.asarray((data_[0][:,2])).reshape(-1,1)
           Z_ = np.asarray((data_[0][:,3])).reshape(-1,1)
           mask = E_ == self.padding_value
-
-          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.transform(E_, X_, Y_, Z_)
+          inE_ = data[1]
+          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.transform(E_, X_, Y_, Z_, inE_)
           mask = mask.reshape(np.shape(new_E_))
           new_E_[mask] = (np.ones(np.shape(new_E_)) * new_padding_value)[mask]
           new_X_[mask] = (np.ones(np.shape(new_X_)) * new_padding_value)[mask]

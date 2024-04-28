@@ -10,6 +10,10 @@ class cloud_dataset(Dataset):
     loaded_file = torch.load(filename, map_location=torch.device(device))
     self.data = loaded_file[0]
     self.condition = torch.as_tensor(loaded_file[1]).float()
+    if len(loaded_file) > 2:
+      self.weight = loaded_file[2]
+    else:
+      self.weight = [torch.ones(len(self.data[idx])) for idx in range(len(self.data))]
     self.min_y = torch.min(self.condition)
     self.max_y = torch.max(self.condition)
     self.max_nhits = -1
@@ -20,11 +24,12 @@ class cloud_dataset(Dataset):
   def __getitem__(self, index):
     x = self.data[index]
     y = self.condition[index]
+    w = self.weight[index]
     if self.transform:
         x = self.transform(x,y,self.device)
     if self.transform_y:
        y = self.transform_y(y, self.min_y, self.max_y)
-    return x,y
+    return x,y,w
   
   def __len__(self):
     return len(self.data)
@@ -35,12 +40,17 @@ class cloud_dataset(Dataset):
             self.max_nhits = len(showers)
 
     padded_showers = []
+    padded_weights = []
     for showers in self.data:
       pad_hits = self.max_nhits-len(showers)
       padded_shower = F.pad(input = showers, pad=(0,0,0,pad_hits), mode='constant', value = value)
       padded_showers.append(padded_shower)
-    
+    for weights in self.weight:
+      pad_hits = self.max_nhits - len(weights)
+      padded_weight = F.pad(input = weights, pad = (0,pad_hits), mode='constant', value=0.0)
+      padded_weights.append(padded_weight)
     self.data = padded_showers
+    self.weight = padded_weights
 
 class rescale_conditional:
   '''Convert hit energies to range |01)
