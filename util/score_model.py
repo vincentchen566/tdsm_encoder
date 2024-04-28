@@ -208,8 +208,13 @@ class Transformer_Block(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
-        self.dense_t = Dense(embed_dim, 1)
-        self.dense_e = Dense(embed_dim, 1)
+        self.embed_t = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
+        self.embed_e = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
+        self.act_sig = lambda x: x * torch.sigmoid(x)
+        self.dense_t = nn.Linear(embed_dim, embed_dim)
+        self.dense_e = nn.Linear(embed_dim, embed_dim)
+        self.dense_t =  Dense(embed_dim, 1)
+        self.dense_e =  Dense(embed_dim, 1)
     def forward(self, input_):
         #residual = x.clone()
         x = input_[0]
@@ -221,8 +226,10 @@ class Transformer_Block(nn.Module):
         # Mean-field attention
         # Multiheaded self-attention but replacing query with a single mean field approximator
         # attn (query, key, value, key mask)
-        x += self.dense_t(t).clone()
-        x += self.dense_e(e).clone()
+        embed_t_ = self.act_sig(self.embed_t(t))
+        embed_e_ = self.act_sig(self.embed_e(e))
+        x += self.dense_t(embed_t_).clone()
+        x += self.dense_e(embed_e_).clone()
         attn_out = self.attn(x_cls, x, x, key_padding_mask = src_key_padding_mask)[0]
 
         attn_res_out = x_cls + attn_out
@@ -244,9 +251,6 @@ class Embed_Block(nn.Module):
     def __init__(self, n_feat_dim, embed_dim, hidden_dim, **kwargs):
         super().__init__()
         self.embed = nn.Linear(n_feat_dim, embed_dim)
-        self.embed_t = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
-        self.embed_e = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim), nn.Linear(embed_dim, embed_dim))
-        self.act_sig = lambda x: x * torch.sigmoid(x)
         self.cls_token = nn.Parameter(torch.ones(1,1,embed_dim), requires_grad=True)
     def forward(self, input_):
 
@@ -254,12 +258,9 @@ class Embed_Block(nn.Module):
         t = input_[1]
         e = input_[2]
         src_key_padding_mask = input_[3]
-
         embed_x_ = self.embed(x)
-        embed_t_ = self.act_sig(self.embed_t(t))
-        embed_e_ = self.act_sig(self.embed_e(e))
         x_cls_expand = self.cls_token.expand(x.size(0), 1, -1)
-        return [embed_x_, embed_t_, embed_e_, x_cls_expand, src_key_padding_mask, t]
+        return [embed_x_, t, e, x_cls_expand, src_key_padding_mask, t]
 
 class Output_Block(nn.Module):
     def __init__(self, n_feat_dim, embed_dim, marginal_prob_std):
@@ -291,7 +292,7 @@ def get_seq_model(n_feat_dim, embed_dim, hidden_dim, num_encoder_blocks, num_att
     return seq_model
 
 
-def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False, serialized_model=False, cp_chunks=0):
+def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, eps=1e-3, device='cpu', diffusion_on_mask=False, serialized_model=False, cp_chunks=0, weight=None):
 
     """The loss function for training score-based generative models
     Uses the weighted sum of Denoising Score matching objectives
@@ -312,7 +313,8 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, ep
     
     # Tensor of randomised 'time' steps
     random_t = torch.rand(incident_energies.shape[0], device=device) * (1. - eps) + eps
-    
+
+
     # Mask to avoid perturbing padded entries
     #input_mask = (x[:,:,0] != 0).unsqueeze(-1)
     mask_tensor = (~attn_padding_mask).float()[...,None]
@@ -342,8 +344,11 @@ def loss_fn(model, x, incident_energies, marginal_prob_std , padding_value=0, ep
         scores = model(perturbed_x, random_t, incident_energies, mask=attn_padding_mask)
     
     # Calculate loss 
-    losses = torch.square( scores*std_[:,None,None] + z )
-    
+    if not weight is None:
+      losses = torch.square( scores*std_[:,None,None] + z ) * weight
+    else:
+      losses = torch.square( scores*std_[:,None,None] + z )
+
     # Mean of losses across all hits and 4-vectors (normalise by number of hits)
     # try sum
     losses = torch.mean( losses, dim=(1,2) )
