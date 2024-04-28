@@ -28,15 +28,27 @@ class pc_sampler:
         self.eps = eps
         self.jupyternotebook = jupyternotebook
         
-        # Dictionary objects  hold lists of variable values at various stages of diffusion process
+        # Dictionary objects hold lists of variable values at various stages of diffusion process
         # Used for visualisation and diagnostic purposes only
-        self.hit_energy_stages = { x:[] for x in self.steps2plot}
-        self.hit_x_stages = { x:[] for x in self.steps2plot}
-        self.hit_y_stages = { x:[] for x in self.steps2plot}
-        self.deposited_energy_stages = { x:[] for x in self.steps2plot}
-        self.av_x_stages = { x:[] for x in self.steps2plot}
-        self.av_y_stages = { x:[] for x in self.steps2plot}
-        self.incident_e_stages = { x:[] for x in self.steps2plot}
+        
+        # Objects for one cloud through all diffusion steps
+        self.step_scores = { x:[] for x in range(0,sampler_steps) }
+        self.step_hite = { x:[] for x in range(0,sampler_steps) }
+        self.step_hitx = { x:[] for x in range(0,sampler_steps) }
+        self.step_hity = { x:[] for x in range(0,sampler_steps) }
+        self.step_hitz = { x:[] for x in range(0,sampler_steps) }
+        
+        self.step_revdrift = { x:[] for x in range(0,sampler_steps) }
+        
+        # Objects for all clouds at selected diffusion steps
+        self.hit_energy_stages = { x:[] for x in self.steps2plot }
+        self.hit_x_stages = { x:[] for x in self.steps2plot }
+        self.hit_y_stages = { x:[] for x in self.steps2plot }
+        self.deposited_energy_stages = { x:[] for x in self.steps2plot }
+        self.av_x_stages = { x:[] for x in self.steps2plot }
+        self.av_y_stages = { x:[] for x in self.steps2plot }
+        self.incident_e_stages = { x:[] for x in self.steps2plot }
+        
         self.serialized_model = serialized_model
         self.hist_bins = [np.linspace(-5., 5., 101), np.linspace(-0.25, sampler_steps + 0.75, sampler_steps*2 + 2)] 
         self.hist = None
@@ -44,6 +56,7 @@ class pc_sampler:
         
         # Padding masks defined by initial # hits / zero padding
         attn_padding_mask = (init_x[:,:,0] == self.padding_value).type(torch.bool)
+        
         # Time array
         t = torch.ones(batch_size, device=self.device)
         
@@ -54,7 +67,7 @@ class pc_sampler:
         # Create array of time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
         step_size = time_steps[0]-time_steps[1]
-
+    
         if self.jupyternotebook:
             time_steps = tqdm.notebook.tqdm(time_steps)
         
@@ -89,36 +102,76 @@ class pc_sampler:
                 batch_time_step = torch.ones(batch_size, device=x.device) * time_step
                 alpha = torch.ones_like(torch.tensor(time_step))
 
-                # Corrector step (Langevin MCMC)
-                # Noise to add to input
-                # Conditional score prediction gives estimate of noise to remove
+                # Calculate gradients
                 if self.serialized_model:
                     grad = score_model([x, batch_time_step, sampled_energies, attn_padding_mask])
                 else:
                     grad = score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
                 
                 nc_steps = corrector_steps
+                self.step_scores[diffusion_step_].extend(grad[1,:,0].cpu().tolist() )
+                self.step_hite[diffusion_step_].extend(x[1,:,0].cpu().tolist())
+                self.step_hitx[diffusion_step_].extend(x[1,:,1].cpu().tolist())
+                self.step_hity[diffusion_step_].extend(x[1,:,2].cpu().tolist())
+                self.step_hitz[diffusion_step_].extend(x[1,:,3].cpu().tolist())
+                
+                # Ensure the first set of values for plots are the unperturbed inputs
+                if diffusion_step_ == 0:
+                    step_incident_e = []
+                    step_hit_e = []
+                    step_hit_x = []
+                    step_hit_y = []
+                    step_deposited_energy = []
+                    step_av_x_pos = []
+                    step_av_y_pos = []
+                    for shower_idx in range(0,len(x)):
+                        all_ine = sampled_energies[shower_idx].cpu().numpy().reshape(-1,1)
+                        all_ine = all_ine.flatten().tolist()
+                        step_incident_e.extend( all_ine )
+                        
+                        all_e = x[shower_idx,:,0].cpu().numpy().reshape(-1,1)
+                        total_deposited_energy = np.sum( all_e )
+                        all_e = all_e.flatten().tolist()
+                        step_hit_e.extend( all_e )
+                        step_deposited_energy.extend( [total_deposited_energy] )
+                        
+                        all_x = x[shower_idx,:,1].cpu().numpy().reshape(-1,1)
+                        av_x_position = np.mean( all_x )
+                        all_x = all_x.flatten().tolist()
+                        step_hit_x.extend(all_x)
+                        step_av_x_pos.extend( [av_x_position] )
+                        
+                        all_y = x[shower_idx,:,2].cpu().numpy().reshape(-1,1)
+                        av_y_position = np.mean( all_y )
+                        all_y = all_y.flatten().tolist()
+                        step_hit_y.extend(all_y)
+                        step_av_y_pos.extend( [av_y_position] )
+                    self.incident_e_stages[diffusion_step_].extend(step_incident_e)
+                    self.hit_energy_stages[diffusion_step_].extend(step_hit_e)
+                    self.hit_x_stages[diffusion_step_].extend(step_hit_x)
+                    self.hit_y_stages[diffusion_step_].extend(step_hit_y)
+                    self.deposited_energy_stages[diffusion_step_].extend(step_deposited_energy)
+                    self.av_x_stages[diffusion_step_].extend(step_av_x_pos)
+                    self.av_y_stages[diffusion_step_].extend(step_av_y_pos)
+                
+                # Corrector step (Langevin MCMC)
+                nc_steps = 100
                 for n_ in range(nc_steps):
                     # Langevin corrector
                     noise = torch.normal(0,1,size=x.shape, device=x.device)
-                    
                     # Mask Langevin noise
                     if not diffusion_on_mask:
                         noise = noise*mask_tensor
-                        
                     # Step size calculation: snr * ratio of gradients in noise / prediction used to calculate
                     flattened_scores = grad.reshape(grad.shape[0], -1)
                     grad_norm = torch.linalg.norm( flattened_scores, dim=-1 ).mean()
                     flattened_noise = noise.reshape(noise.shape[0],-1)
                     noise_norm = torch.linalg.norm( flattened_noise, dim=-1 ).mean()
-                    
                     # Langevin step-size
-                    langevin_step_size =  (self.snr * noise_norm / grad_norm)**2 * 2 * alpha
-                    
+                    langevin_step_size = 2 * alpha * (self.snr * noise_norm / grad_norm)**2
                     # Adjust inputs according to scores using Langevin iteration rule
                     x_mean = x + langevin_step_size * grad
                     x = x_mean + torch.sqrt(2 * langevin_step_size) * noise
-
                     if not diffusion_on_mask:
                         x = x*mask_tensor
               
@@ -131,14 +184,25 @@ class pc_sampler:
                   self.hist = self.hist + hist_
                 # Euler-Maruyama Predictor
                 # Adjust inputs according to scores
+                
+                ### Euler-Maruyama Predictor ###
+                
+                # Forward SDE coefficients
                 drift, diff = self.diffusion_coeff_fn(x,batch_time_step)
+                
+                # Drift term for reverse SDE 
                 if self.serialized_model:
                     drift = drift - (diff**2)[:, None, None] * score_model([x, batch_time_step, sampled_energies, attn_padding_mask])
                 else:
                     drift = drift - (diff**2)[:, None, None] * score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
+                
+                # Take step according to drift
                 x_mean = x - drift*step_size
+                
                 if not diffusion_on_mask:
                     x_mean = x_mean*mask_tensor
+                
+                # Add the diffusion term of the reverse SDE
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
 
                 x_to_hist = x[:,:,0].view(-1).cpu().numpy().copy()
@@ -149,8 +213,12 @@ class pc_sampler:
                 else:
                   self.hist = self.hist + hist_          
 
+                
+                ### For plots of reverse drift/diffusion ###
+                self.step_revdrift[diffusion_step_].extend(drift[1,:,0].cpu().tolist() )
+                
                 # Store distributions at different stages of diffusion (for visualisation purposes only)
-                if diffusion_step_ in self.steps2plot:
+                if diffusion_step_ in self.steps2plot and diffusion_step_!=0:
                     step_incident_e = []
                     step_hit_e = []
                     step_hit_x = []
@@ -159,23 +227,23 @@ class pc_sampler:
                     step_av_x_pos = []
                     step_av_y_pos = []
                     for shower_idx in range(0,len(x_mean)):
-                        all_ine = np.array( sampled_energies[shower_idx].cpu().numpy().copy() ).reshape(-1,1)
+                        all_ine = sampled_energies[shower_idx].cpu().numpy().reshape(-1,1)
                         all_ine = all_ine.flatten().tolist()
                         step_incident_e.extend( all_ine )
                         
-                        all_e = np.array( x_mean[shower_idx,:,0].cpu().numpy().copy() ).reshape(-1,1)
+                        all_e = x_mean[shower_idx,:,0].cpu().numpy().reshape(-1,1)
                         total_deposited_energy = np.sum( all_e )
                         all_e = all_e.flatten().tolist()
                         step_hit_e.extend( all_e )
                         step_deposited_energy.extend( [total_deposited_energy] )
                         
-                        all_x = np.array( x_mean[shower_idx,:,1].cpu().numpy().copy() ).reshape(-1,1)
+                        all_x = x_mean[shower_idx,:,1].cpu().numpy().reshape(-1,1)
                         av_x_position = np.mean( all_x )
                         all_x = all_x.flatten().tolist()
                         step_hit_x.extend(all_x)
                         step_av_x_pos.extend( [av_x_position] )
                         
-                        all_y = np.array( x_mean[shower_idx,:,2].cpu().numpy().copy() ).reshape(-1,1)
+                        all_y = x_mean[shower_idx,:,2].cpu().numpy().reshape(-1,1)
                         av_y_position = np.mean( all_y )
                         all_y = all_y.flatten().tolist()
                         step_hit_y.extend(all_y)

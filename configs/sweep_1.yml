@@ -1,0 +1,35 @@
+method: random
+metric:
+  name: loss
+  goal: minimize
+parameters:
+  train_ratio: 
+    value: 0.9
+  batch_size:
+    value: 128
+  lr:
+    values: [0.0003, 0.003]
+  epochs:
+    value: 5
+  n_feat_dim: 
+    value: 4
+  embed_dim: 
+    values: [40,80]
+  hidden_dim: 
+    values: [128,256]
+  num_encoder_blocks: 
+    values: [3,4]
+  num_attn_heads: 
+    value: 6
+  dropout_gen:
+    value: 0.2
+  SDE:
+    value: "VP"
+  sigma_max: 
+    value: 20.0
+  sigma_min: 
+    value: 0.01
+  sampler_steps: 
+    value: 100
+  n_showers_2_gen: 
+    value: 100

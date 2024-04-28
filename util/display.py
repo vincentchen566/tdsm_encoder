@@ -1,5 +1,5 @@
 import torch, sys, os
-import util.data_utils as utils
+import data_utils as utils
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.colorbar import ColorbarBase
@@ -21,7 +21,7 @@ def invert_transform_e(e_):
 
 # Pass a list of plots, bins and titles and function will recursively loop through and plot
 class recursive_plot:
-    def __init__(self, n_plots, name1, vals_list, n_bins, titles):
+    def __init__(self, n_plots, name1, vals_list, x_titles, n_bins=0, xvals_list=[], y_titles=[], colors=[]):
         '''
         Plot list of any number plots
         Args:
@@ -29,25 +29,46 @@ class recursive_plot:
             name1: save name
             vals_list: list of lists/arrays of values/datapoints to plot
             n_bins: number of bins
-            titles: title (or x-axis label) for each histogram
+            x_titles: x-axis label for each histogram
         '''
         self.n_plots = n_plots
         self.fig, self.ax = plt.subplots(1,n_plots, figsize=(25,4))
         self.fig.suptitle(name1)
         self.vals_list = vals_list
+        self.xvals_list = xvals_list
         self.n_bins = n_bins
-        self.titles = titles
+        self.x_titles = x_titles
+        self.y_titles = y_titles
+        self.colors = colors
     
     def rec_plot(self):
         if len(self.vals_list) == 0:
             return None
         plot_idx = self.n_plots-len(self.vals_list)
         self.ax[plot_idx].hist(self.vals_list[0], bins=self.n_bins[0])
-        self.ax[plot_idx].set_xlabel(self.titles[0])
+        self.ax[plot_idx].set_xlabel(self.x_titles[0])
         self.vals_list.pop(0)
         self.n_bins.pop(0)
-        self.titles.pop(0)
+        self.x_titles.pop(0)
+        self.ax[plot_idx].set_yscale('log')
         self.rec_plot()
+
+    def rec_scatter(self):
+        if len(self.vals_list) == 0:
+            return None
+        if len(self.xvals_list) == 0:
+            print('WARNING: no xvals provided for scatter plot')
+            return None
+        plot_idx = self.n_plots-len(self.vals_list)
+        self.ax[plot_idx].scatter(self.xvals_list[0],self.vals_list[0])
+        self.ax[plot_idx].set_xlabel(self.x_titles[0])
+        self.ax[plot_idx].set_ylabel(self.y_titles[0])
+        self.vals_list.pop(0)
+        self.xvals_list.pop(0)
+        self.y_titles.pop(0)
+        self.x_titles.pop(0)
+        self.ax[plot_idx].set_yscale('log')
+        self.rec_scatter()
 
     def save(self, savename):
         self.fig.savefig(savename)

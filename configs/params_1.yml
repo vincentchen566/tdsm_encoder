@@ -1,0 +1,18 @@
+model_params:   
+    train_ratio: 0.9
+    batch_size: 128
+    lr: 0.003
+    n_epochs: 5
+    n_feat_dim: 4
+    embed_dim: 200
+    hidden_dim: 128
+    num_encoder_blocks: 3
+    num_attn_heads: 4
+    dropout_gen: 0.2
+sde_params:
+    SDE: "VP"
+    sigma_max: 5.0
+    sigma_min: 0.01
+sampler_params:
+    sampler_steps: 100
+    n_showers_2_gen: 100
