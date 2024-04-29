@@ -14,6 +14,7 @@ from torch.utils.data import Dataset, DataLoader
 # TDSM libs
 # needs to be full path on afs
 sys.path.insert(0, '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/util')
+sys.path.insert(1, 'util') # Local path / user independent
 import data_utils as utils
 import score_model as score_model
 import sdes as sdes
@@ -50,8 +51,8 @@ def train_model(files_list_, device='cpu'):
     config = wandb.config
     print(f'training config: {config}')
 
-    #wd = os.getcwd()
-    wd = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/'
+    wd = os.getcwd()
+    #wd = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/'
     output_files = 'training_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
     output_directory = os.path.join(wd, output_files)
     print('Training directory: ', output_directory)
@@ -94,6 +95,9 @@ def train_model(files_list_, device='cpu'):
     eps_ = []
     batch_ct = 0
     for epoch in range(0, config.epochs ):
+        sys.stdout.write('\r')
+        sys.stdout.write('Progress: %d/%d'%((epoch+1), config.epochs)) # Local Progress Tracker
+        sys.stdout.flush()
         eps_.append(epoch)
 
         # Create/clear per epoch variables
@@ -153,16 +157,17 @@ def train_model(files_list_, device='cpu'):
             torch.save(model.state_dict(), os.path.join(output_directory, 'ckpt_tmp_'+str(epoch)+'.pth' ))
     
     torch.save(model.state_dict(), os.path.join(output_directory, 'ckpt_tmp_'+str(epoch)+'.pth' ))
-    return
+    return os.path.join(output_directory, 'ckpt_tmp_'+str(epoch)+'.pth' )
 
 
-def generate(files_list_, device='cpu'):
+def generate(files_list_, device='cpu', model_name=''):
 
     wd = os.getcwd()
     output_file = 'sampling_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
     output_directory = os.path.join(wd, output_file)
     print('Sampling directory: ', output_directory)
-
+    if not os.path.exists(output_directory):
+      os.system('mkdir -p {}'.format(output_directory))
     config = wandb.config
 
     # Instantiate stochastic differential equation
@@ -175,7 +180,7 @@ def generate(files_list_, device='cpu'):
 
     # Load saved model
     model=score_model.Gen(config.n_feat_dim, config.embed_dim, config.hidden_dim, config.num_encoder_blocks, config.num_attn_heads, config.dropout_gen, marginal_prob_std=marginal_prob_std_fn)
-    load_name = os.path.join(wd,'training_20230830_1430_output/ckpt_tmp_499.pth')
+    load_name = os.path.join(wd, model_name)
     model.load_state_dict(torch.load(load_name, map_location=device))
     model.to(device)
 
@@ -500,11 +505,11 @@ def main(config=None):
     padding_value = 0.0
 
     # List of training input files
-    training_file_path = os.path.join('/eos/user/j/jthomasw/tdsm_encoder/datasets/', indir)
+    training_file_path = os.path.join(indir) # change indir to be absolute path
     files_list_ = []
     print(f'Training files found in: {training_file_path}')
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry424To564*.pt'):
+        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry1To129*.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
@@ -595,13 +600,15 @@ def main(config=None):
             save_name = os.path.join(training_file_path,'input_dists_transformed.png')
             fig.savefig(save_name)
 
+
+        train_model_name = "/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/training_20230830_1430_output/ckpt_tmp_499.pth" #Default model name 
         #### Training ####
         if switches_>>1 & trigger:
-            train_model(files_list_, device=device)
+            train_model_name = train_model(files_list_, device=device)
         
         #### Sampling ####
         if switches_>>2 & trigger:
-            generate(files_list_, device=device)
+            generate(files_list_, device=device, model_name = train_model_name)
 
         #### Evaluation plots ####
         if switches_>>3 & trigger:
@@ -751,7 +758,7 @@ if __name__=='__main__':
     # Run main function using sweep agents reading from configs
     # Sweeps run by setting range of parameter values to explore, else set single parameter value
     # Running from yaml files facilitates submitting (several) jobs to condor
-    n_runs = 128
+    n_runs = 1
     sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
     wandb.agent(sweep_id, main, count=n_runs)
 
