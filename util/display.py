@@ -159,7 +159,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
             
             # For each batch in file
             print(f'# batches: {len(point_clouds_loader)}')
-            for i, (shower_data,incident_energies,_) in enumerate(point_clouds_loader,0): 
+            for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0): 
                 valid_hits = []
                 data_np = shower_data.cpu().numpy().copy()
                 incident_energies = incident_energies.cpu().numpy().copy()
@@ -217,7 +217,7 @@ def plot_distribution(files_:Union[ list , utils.cloud_dataset], nshowers_2_plot
         # Note: Shuffling can be turned off if you want to see specific showers
         point_clouds_loader = DataLoader(files_, batch_size=batch_size, shuffle=True)
 
-        for i, (shower_data,incident_energies,_) in enumerate(point_clouds_loader,0):
+        for i, (shower_data,incident_energies) in enumerate(point_clouds_loader,0):
             valid_hits = []
             data_np = shower_data.cpu().numpy().copy()
             energy_np = incident_energies.cpu().numpy().copy()
