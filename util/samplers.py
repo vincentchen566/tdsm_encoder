@@ -102,7 +102,7 @@ class pc_sampler:
             y_pred.append( ytmp )
         return pred_nhits, y_pred
     
-    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False, corrector_steps=100):
        
         # Padding masks defined by initial # hits / zero padding
         attn_padding_mask = (init_x[:,:,0] == self.padding_value).type(torch.bool)
