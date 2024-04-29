@@ -8,128 +8,9 @@ from sklearn.preprocessing import RobustScaler, PowerTransformer, QuantileTransf
 from pickle import dump
 import pickle
 sys.path.insert(1, '../')
+sys.path.insert(0, '../util')
 import util.data_utils, psutil
-
-# tanh with enhanced gradient for hit energy transformation
-def transform_hit_e(hit_energies):
-    #new_e = 2/(1+np.exp(-10*hit_energies)) - 1
-    new_e = -(1/15.)*np.log(hit_energies/(1+hit_energies))
-    new_e = np.nan_to_num(new_e)
-    new_e = np.reshape(new_e,(-1,))
-    return new_e
-
-# Sigmoid with reduced gradient for hit positions transformation
-def transform_hit_xy(hit_pos):
-    new_pos = 1/(1+np.exp(-0.04*hit_pos))
-    new_pos = np.nan_to_num(new_pos)
-    new_pos = np.reshape(new_pos,(-1,))
-    return new_pos
-
-# Min max for z layer
-def transform_hit_z(z_):
-    maxz_ = np.max(z_)
-    minz_ = np.min(z_)
-    z_ = (z_ - minz_) / (maxz_ - minz_)
-    return z_
-
-# Min-max incident energy transformation
-def transform_incident_energy(ine_):
-    maxe_ = np.max(ine_)
-    mine_ = np.min(ine_)
-    new_ine = (ine_ - mine_) / (maxe_ - mine_)
-    return new_ine
-
-class Preprocessor:
-    def __init__(self):
-        self.maxe_ = 1000. 
-        self.mine_ = 1.
-        self.maxz_ = 0.0
-        self.minz_ = 44.0 
-
-
-    ########################
-    ##  Incident  Energy  ##
-    ########################
-
-    def fit_incident_energy(self, ine_):
-        self.maxe_ = np.max(ine_)
-        self.mine_ = np.min(ine_)
-        return
-
-    def transform_incident_energy(self, ine_):
-        new_ine = (ine_ - self.mine_) / (self.maxe_ - self.mine_)
-        return new_ine
-
-    def inverse_transform_incident_energy(self, ine_):
-        new_ine = (self.maxe_ - self.mine_)*ine_ + self.mine_
-        return new_ine
-
-
-    ######################
-    ##  Transform XYZE  ##
-    ######################
-
-    def fit(self,Z):
-      if self.maxz_ is None:
-        self.maxz_ = np.max(Z)
-        self.minz_ = np.min(Z)
-      else:
-        self.maxz_ = max(np.max(Z), self.maxz_)
-        self.minz_ = min(np.min(Z), self.minz_)
-      
-
-    def transform_hit_xy(self, hit_pos):
-      new_pos = 1/(1+np.exp(-0.04*hit_pos))
-      new_pos = np.nan_to_num(new_pos)
-      new_pos = np.reshape(new_pos, (-1,))
-      return new_pos
-
-    def inverse_transform_hit_xy(self, new_pos, mask, new_padding_value):
-      new_pos = np.log(1./new_pos - 1)/(-0.04)
-      pad  = np.ones((len(new_pos),1)) * new_padding_value
-      new_pos[mask] = pad[mask]
-      new_pos = np.nan_to_num(new_pos)
-      new_pos = np.reshape(new_pos, (-1,))
-      return new_pos
-
-    def transform_hit_z(self, z_):
-      z_ = (z_ - self.minz_) / (self.maxz_ - self.minz_)
-      return z_
-
-    def inverse_transform_hit_z(self, z_, mask, new_padding_value):
-      z_ = (self.maxz_ - self.minz_)*z_ + self.minz_
-      z_[mask] = (np.ones((len(z_),1)) * new_padding_value)[mask]
-      z_ = np.reshape(z_, (-1,))
-      return z_
-
-    def transform_hit_e(self, e_):
-      new_e = -(1/15.)*np.log(e_/(1+e_))
-      new_e = np.nan_to_num(new_e)
-      new_e = np.reshape(new_e, (-1,))
-      return new_e
-
-    def inverse_transform_hit_e(self, e_, mask, new_padding_value):
-
-      new_e = (np.exp(-15.*e_))/(1.0 - np.exp(-15.*e_))
-
-      new_e[mask] = (np.ones((len(new_e), 1))*new_padding_value)[mask]
-      new_e = np.reshape(new_e, (-1,))
-      return new_e
-
-    def transform(self, E,X,Y,Z):
-      new_E = self.transform_hit_e(E)
-      new_X = self.transform_hit_xy(X)
-      new_Y = self.transform_hit_xy(Y)
-      new_Z = self.transform_hit_z(Z)
-      return new_E, new_X, new_Y, new_Z
-
-    def inverse_transform_hit(self, E,X,Y,Z, padding_value, new_padding_value):
-      mask = (E == padding_value)
-      new_E = self.inverse_transform_hit_e(E, mask, new_padding_value)
-      new_X = self.inverse_transform_hit_xy(X, mask, new_padding_value)
-      new_Y = self.inverse_transform_hit_xy(Y, mask, new_padding_value)
-      new_Z = self.inverse_transform_hit_z(Z, mask, new_padding_value)
-      return new_E, new_X, new_Y, new_Z
+from util.Convertor import Preprocessor
       
 def main():
     usage=''
@@ -161,9 +42,9 @@ def main():
     
     # For each file
     for infile in os.listdir(indir):
-        if fnmatch.fnmatch(infile, 'dataset_2_tensor_no_pedding_euclidian_nentry*.pt'):
+        if fnmatch.fnmatch(infile, 'dataset_2_tensor_no_padding_euclidian_nentry*.pt'):
             filename = os.path.join(indir,infile)
-            ofile = infile.replace("tensor_no_pedding_euclidian", "padded" )
+            ofile = infile.replace("tensor_no_padding_euclidian", "padded" )
             opath = './'
             odir = os.path.join(opath,odir)
             if not os.path.exists(odir):
@@ -183,6 +64,9 @@ def main():
             max_nhits = 0
             custom_data = util.data_utils.cloud_dataset(filename, device=device)
             padded_showers = []
+#            padded_weights = []
+            nhits          = []
+
             for shower in custom_data.data:
 
 #                if shower.shape[0] > max_nhits:
@@ -198,6 +82,7 @@ def main():
 
             incident_energies = np.asarray( incident_energies ).reshape(-1, 1)
             #preprocessor.fit_incident_energy( incident_energies)
+            incident_energies_org = incident_energies / GeV
             incident_energies = preprocessor.transform_incident_energy(incident_energies)
             incident_energies = torch.from_numpy( incident_energies.flatten() )
             print(f'incident_energies:{incident_energies}')
@@ -215,7 +100,7 @@ def main():
               #preprocessor.fit(Z_)
 
 
-            for showers in custom_data.data:
+            for ievent, showers in enumerate(custom_data.data):
                 if showers.shape[0] == 0:
                     print(f'incident e: {incident_energies[shower_count]} with {showers.shape[0]} hits')
                     continue
@@ -234,26 +119,38 @@ def main():
                 Z_ = Z_[mask_e].reshape(-1,1)
 
                 if(len(E_) == 0): continue
+      
+                E_flat_  = E_.flatten()
+                nhit     = np.sum(mask_e)
+
+                total_E_ = np.sum(E_flat_)
+                if not total_E_ >0.:
+                  W_ = E_flat_ * 0.0
+                else:
+                  W_ = E_flat_ / total_E_
                 
                 if transform == 1:
-                    E_, X_, Y_, Z_ = preprocessor.transform(E_, X_, Y_, Z_)
+                    E_, X_, Y_, Z_ = preprocessor.transform(E_, X_, Y_, Z_, incident_energies[ievent])
                     
                 E_ = torch.from_numpy( E_.flatten() )
                 X_ = torch.from_numpy( X_.flatten() )
                 Y_ = torch.from_numpy( Y_.flatten() )
                 Z_ = torch.from_numpy( Z_.flatten() )
+                W_ = torch.from_numpy( W_.flatten() )
                 shower_data_transformed = torch.stack((E_,X_,Y_,Z_), -1)
                 
                 pad_hits = max_nhits-shower_data_transformed.shape[0]
                 # Homogenise data with padding to make all showers the same length
                 padded_shower = F.pad(input = shower_data_transformed, pad=(0,0,0,pad_hits), mode='constant', value=0.0)
-                
+                #padded_weight = F.pad(input = W_, pad=(0, pad_hits), mode='constant', value=0.0) 
                 # normal padding
                 padded_showers.append(padded_shower)
-                
+                #padded_weights.append(padded_weight)
+                nhits.append(nhit)
                 shower_count+=1
-             
-            torch.save([padded_showers,incident_energies], outfilename)
+            
+            nhits = torch.from_numpy(np.array(nhits))
+            torch.save([padded_showers,incident_energies, nhits], outfilename)
 
             ############
             # Check the transformation and padding by making some plots
