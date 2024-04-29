@@ -1,4 +1,5 @@
 import time, functools, torch, os, sys, random, fnmatch, psutil, argparse
+sys.path.insert(0, './util')
 from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 from torch.optim import Adam
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-import display
+import util.display
 import tqdm
 import data_utils as utils
 from collections import OrderedDict
