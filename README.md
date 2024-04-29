@@ -1,52 +1,36 @@
 <!--### Time derivative score-based model notes-->
 <!-- ![img](Banner_grey.jpg) -->
-# Setup
+# Setup and Quick Start
 
 ## lxplus setup
+To ensure the necessary external software packages are available, use one of the software stacks available on the CERN Virtual Machine File System (CVMFS). This distributed disk system should provide all the necessary dependancies you will requires. If you want to use GPUs, ensure the stack you source has CUDA capabilities e.g.
 ```
 source /cvmfs/sft.cern.ch/lcg/views/LCG_102b_cuda/x86_64-centos7-gcc8-opt/setup.sh
 ```
-To check which versions are intalled with you python installation start a python session and run:
-```
-print(torch_geometric.__version__)
-```
-## Conda
-Used conda pacakage installation and management tool to create new environment 'tdsbmodel' holding all required packages
-conda activate tdsbmodel
 
-## Python Virtual Environment
-You can set up a virtualenv. Using the following commands I updated to python 3.8 
-on lxplus:
-```
-scl enable rh-python38 bash
-python -V
-```
-which enabled me to setup a venv for python 3.8:
-```
-python -m venv virtualenvpy3p8
-```
-update pip
-```
-pip install --upgrade pip
-```
-and install the latest stable pytorch version:
-```
-pip install torch
-```
-Now the command 
-```
-torch.cuda.get_arch_list()
-```
-when run on a machine with GPU capability, should return a list that includes sm_80.
+# Datasets
+Taking datasets from calochallenge atm. See calochallenge page for where to download datasets. Within the datasets directory one can find the pad_events.py script. Using this, one can pad showers to have the same size, allowing the batch computations implemented in our framework, and pre-process them however you want. The output is save in a .pt format in the same directory.
 
-List of required libraries not in lxplus8 environment by default:
+# Training locally
+We provide a series of Jupyter notebooks that will help you run the full ML pipeline. From creating and playing with a representative toy dataset in order to speed up the optimisation process, to pre-processing, training, generating and evaluating using the CallChallenge datasets. 
+
+Once youve been through the notebooks, one can run the code locally and monitor its progress on WandB. The following command represents how to run a local training:
 ```
-torch
+python3 trans_tdsm.py -s <switches> -i <input dataset directory> -c <config file>
 ```
+The following explains each of the arguments:
+- switches = Binary representation of switches that run: evaluation plots (1000), sampling (0100), training (0010), input_plots (0001)
+- input dataset directory = Path to directory holding the input dataset .pt file which has already been padded / pre-processed etc.
+- config = configuration .yaml file containing settings for SDE forward/backward diffusion scheduler, model hyperparameters and reverse sampling
+
+The config is verstaile in the fact that one can provide single setting values at a time or a list of values simultanesouly for a WandB sweep. Outputs are saved locally, with names defined according to the settings used. You can of course override this if you want a different naming convention.
 
 # Condor
 ## Running Jobs on Condor
-Note the condor scripts available in the condor_scripts directory allow one to submit jobs to run on CERNs lxplus farm remotely. You can ask for more CPUs and/or memory but the system will scale the number of CPUs you receive to respect the 2GB per core limit.
+Note the condor scripts available in the condor_scripts directory allow one to submit jobs to run on CERNs lxplus farm remotely. With the .yaml config, you can submit sweeps of hyperparameters to explore the interplay and optimise settings. For this you probably want to run jobs fro a limited number fo epochs. You can also run jobs with different idividual settings in parallel by providing different .yaml files to the submission script via a naming convention it recognises (see submit_tdsm.sub).
+
+
+You can ask for more CPUs and/or memory but the system will scale the number of CPUs you receive to respect the 2GB per core limit.
 
 To ask for more CPUs, alter N in the following command in the submission script:
 ```
@@ -61,13 +45,6 @@ Number of GPU with 4 or more slots:
 ```
 condor_status -const 'TotalSlotGpus >= 4' -compact
 ```
-## Priority
-Check real priority with
-```
-condor_userprio -all
-```
-0.5 is best possible value. The higher, the worse. User with priority 10 will get twice as many machines as a user with priority 20.
-
 ## Monitoring jobs
 A very useful command to monitor jobs that perhaps don't run, start to run and stop, or get held etc. (i.e. don't fail but don't succeed) is:
 ```
@@ -76,25 +53,13 @@ condor_q -better -analyze <jobid>
 If the problem was that the environment/machine specs you've asked for just don't exist, this is where you'll find the proof.
 
 ## Running on GPUs
-GPU resources are available through HTCondor. One can simply add the folowing line to the submission script:
+GPU resources are available through HTCondor. Currently, scrips in condor_scripts are setup to run on lxbatch GPUs, ensured by the folowing line to the submission script:
 ```
 request_GPUs = N
 ```
 You can request < 5 slots on a GPU core (not sure it's possible to request multiple different machines?). Pytorch has built in methods for parrellising processes. DataParrallel is a single process multi-thread parrallelism that requires minimal extra code. DistributedDataParrallel is a multi-process parrallelism that can work on different machines by grouping DDP instances together under a group ID. It is faster and scalable and incredibly useful if you have several GPU machines
 
 Careful when requesting several GPU. After considering machines only with more than one slot, that are accessible in the longer queues etc you may not have many options and might be waiting a while to get on a machine that can run your job.
-
-
-# Datasets
-Taking datasets from calochallenge atm. See calochallenge page for where to download datasets from.
-
-# Useful/interesting Pytorch Info
-## Modules
-Pytorch uses modules to represent neural networks. Pytorch provides a robust library of modules and makes it simple to define new ones.
-All NN modules should:
-- Inherit from the base module class nn.Module.
-- Define some 'state used in computation i.e. randomly-initialised weights and bias tensors. These are defined as nn.Parameter i.e. tensors to be considered a learnable module parameter and are registered and tracked.
-- Define some forward function e.g. in a 'Linear' module, an affine transformation like w(x)+b is performed. This will matrix-multiply the input with the weights and add the bias tensor to create some output tensor.
 
 # Understanding score-matching
 If we take for starters, the simplified time-independent case with no noise perturbation, what we do is take all the input images, pass them through a neural network which gives us an estimate of the scores for each pixel in the image. This will be a tensor of scores for for each pixel for all images (same input and output dimensions). Predicting the scores rather than the the probability density avoids having to calculate the intractable normalisation constant.
@@ -197,9 +162,3 @@ How you order the dimensions of the input is important when passing to the trans
 ```
 [# batches, # points, # features]
 ```
-
-
-# Data Transformation
-Transforming the input data of your machine learning algorithm is often key to its success. Preprocessing data will often be one of the most time-consuming parts of the project. Custom transformations often necessary and finding the best one can prove incredibly helpful to the algorithm (see here for a nice visual explanation https://donaldpinckney.com/books/pytorch/book/ch2-linreg/2018-11-15-feature-scaling.html)
-
-Pytorch provides a suite of transformations ready to go as well as the functionality to compose your own custom transformations. We can write a custom transformation function as a callable class, rather than a simple function, so that the parameters of the transformation do not need to be passed every time it is called.
