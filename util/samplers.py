@@ -52,22 +52,67 @@ class pc_sampler:
         self.serialized_model = serialized_model
         self.hist_bins = [np.linspace(-5., 5., 101), np.linspace(-0.25, sampler_steps + 0.75, sampler_steps*2 + 2)] 
         self.hist = None
-    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False, corrector_steps = 100):
+
+    def random_sampler(self, pdf,xbin):
+        myCDF = np.zeros_like(xbin,dtype=float)
+        myCDF[1:] = np.cumsum(pdf)
+        a = np.random.uniform(0, 1)
+        return xbin[np.argmax(myCDF>=a)-1]
+
+    def get_prob_dist(self, x,y,nbins):
+        '''
+        2D histogram:
+        x = incident energy per shower
+        y = # valid hits per shower
+        '''
+        hist,xbin,ybin = np.histogram2d(x,y,bins=nbins,density=False)
+        # Normalise histogram
+        sum_ = hist.sum(axis=-1)
+        sum_ = sum_[:,None]
+        hist = hist/sum_
+        # Remove NaN
+        hist[np.isnan(hist)] = 0.0
+        return hist, xbin, ybin
+
+    def generate_hits(self, prob, xbin, ybin, x_vals, n_features, device='cpu'):
+        '''
+        prob = 2D PDF of nhits vs incident energy
+        x/ybin = histogram bins
+        x_vals = sample of incident energies (sampled from GEANT4)
+        n_features = # of feature dimensions e.g. (E,X,Y,Z) = 4
+        Returns:
+        pred_nhits = array of nhit values, one for each shower
+        y_pred = array of tensors (one for each shower) of initial noise values for features of each hit, sampled from normal distribution
+        '''
+        # bin index each incident energy falls into
+        ind = np.digitize(x_vals, xbin) - 1
+        ind[ind==len(xbin)-1] = len(xbin)-2
+        ind[ind==-1] = 0
+        # Construct list of nhits for given incident energies
+        prob_ = prob[ind,:]
         
+        y_pred = []
+        pred_nhits = []
+        for i in range(len(prob_)):
+            nhits = int(self.random_sampler(prob_[i],ybin + 1))
+            pred_nhits.append(nhits)
+            # Generate random values for features in all hits
+            #ytmp = torch.normal(0,1,size=(nhits, n_features), device=device)
+            ytmp = self.sde.prior_sampling((nhits,4))
+            y_pred.append( ytmp )
+        return pred_nhits, y_pred
+    
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
+       
         # Padding masks defined by initial # hits / zero padding
         attn_padding_mask = (init_x[:,:,0] == self.padding_value).type(torch.bool)
-        
         # Time array
         t = torch.ones(batch_size, device=self.device)
-        
         # mask avoids perturbing padded values
-        #mask_tensor = (x[:,:,0] != 0).unsqueeze(-1)
         mask_tensor  = (~attn_padding_mask).float()[...,None]
-        
         # Create array of time steps
         time_steps = np.linspace(1., self.eps, self.sampler_steps)
         step_size = time_steps[0]-time_steps[1]
-    
         if self.jupyternotebook:
             time_steps = tqdm.notebook.tqdm(time_steps)
         
@@ -77,11 +122,10 @@ class pc_sampler:
         with torch.no_grad():
             # Matrix multiplication in GaussianFourier projection doesnt like float64
             sampled_energies = sampled_energies.to(x.device, torch.float32)
-            
             # Noise to add to input
             z = torch.normal(0,1,size=x.shape, device=x.device)
            
-
+            # Diffusion flow plot
             x_to_hist = x[:,:,0].view(-1).cpu().numpy().copy()
             t_to_hist = np.ones(len(x_to_hist)) * 0
             hist_,_,_ = np.histogram2d(x_to_hist, t_to_hist, bins = self.hist_bins)
@@ -95,13 +139,10 @@ class pc_sampler:
                 if not diffusion_on_mask:
                     x = x*mask_tensor
                     z = z*mask_tensor
-                
                 if not self.jupyternotebook:
                     print(f"Sampler step: {time_step:.4f}") 
-                
                 batch_time_step = torch.ones(batch_size, device=x.device) * time_step
                 alpha = torch.ones_like(torch.tensor(time_step))
-
                 # Calculate gradients
                 if self.serialized_model:
                     grad = score_model([x, batch_time_step, sampled_energies, attn_padding_mask])
@@ -155,7 +196,6 @@ class pc_sampler:
                     self.av_y_stages[diffusion_step_].extend(step_av_y_pos)
                 
                 # Corrector step (Langevin MCMC)
-                nc_steps = 100
                 for n_ in range(nc_steps):
                     # Langevin corrector
                     noise = torch.normal(0,1,size=x.shape, device=x.device)
@@ -486,3 +526,4 @@ def generate_hits(prob, xbin, ybin, x_vals, n_features, device='cpu', std=1.0):
         ytmp = torch.normal(0,1,size=(nhits, n_features), device=device) * std
         y_pred.append( ytmp )
     return pred_nhits, y_pred
+    

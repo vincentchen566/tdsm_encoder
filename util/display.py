@@ -659,3 +659,122 @@ def make_diffusion_plot_v2(distributions, titles=[], outdir='', steps=[]):
       )
     fig.savefig(os.path.join(outdir, '{}_diffusion_2D.png'.format(key)))
   return
+
+def comparison_summary(dists, dists_gen, sampling_directory, erange=(), xrange=(), yrange=(), zrange=()):
+    
+    entries = dists[0]
+    all_incident_e = dists[1]
+    all_hit_ine_geant = dists[2]
+    all_e = dists[3]
+    all_x = dists[4]
+    all_y = dists[5]
+    all_z = dists[6]
+    average_e_shower_geant = dists[7]
+    average_x_shower_geant = dists[8]
+    average_y_shower_geant = dists[9]
+    
+    entries_gen = dists_gen[0]
+    all_incident_e_gen = dists_gen[1]
+    all_hit_ine_gen = dists_gen[2]
+    all_e_gen = dists_gen[3]
+    all_x_gen = dists_gen[4]
+    all_y_gen = dists_gen[5]
+    all_z_gen = dists_gen[6]
+    average_e_shower_gen = dists_gen[7]
+    average_x_shower_gen = dists_gen[8]
+    average_y_shower_gen = dists_gen[9]
+
+    fig, ax = plt.subplots(3,3, figsize=(12,12))
+    bins=np.histogram(np.hstack((entries,entries_gen)), bins=70)[1]
+    ax[0][0].set_ylabel('# entries')
+    ax[0][0].set_xlabel('Hit entries')
+    ax[0][0].hist(entries, bins, alpha=0.5, color='orange', label='Geant4')
+    ax[0][0].hist(entries_gen, bins, alpha=0.5, color='blue', label='Gen')
+    ax[0][0].legend(loc='upper right')
+
+    
+    ax[0][1].set_ylabel('# entries')
+    ax[0][1].set_xlabel('Hit energy [GeV]')
+    if len(erange)==0:
+        bins=np.histogram(np.hstack((all_e,all_e_gen)), bins=100)[1]
+        ax[0][1].hist(all_e, bins=bins, alpha=0.5, color='orange', label='Geant4')
+        ax[0][1].hist(all_e_gen, bins=bins, alpha=0.5, color='blue', label='Gen')
+    else:
+        ax[0][1].hist(all_e, bins=40, range=erange, alpha=0.5, color='orange', label='Geant4')
+        ax[0][1].hist(all_e_gen, bins=40, range=erange, alpha=0.5, color='blue', label='Gen')
+    ax[0][1].set_yscale('log')
+    ax[0][1].legend(loc='upper right')
+
+    
+    ax[0][2].set_ylabel('# entries')
+    ax[0][2].set_xlabel('Hit x position')
+    if len(xrange) == 0:
+        bins=np.histogram(np.hstack((all_x,all_x_gen)), bins=50)[1]
+        ax[0][2].hist(all_x, bins=bins, alpha=0.5, color='orange', label='Geant4')
+        ax[0][2].hist(all_x_gen, bins=bins, alpha=0.5, color='blue', label='Gen')
+    else:
+        ax[0][2].hist(all_x, bins=40, range=xrange, alpha=0.5, color='orange', label='Geant4')
+        ax[0][2].hist(all_x_gen, bins=40, range=xrange, alpha=0.5, color='blue', label='Gen')
+    ax[0][2].set_yscale('log')
+    ax[0][2].legend(loc='upper right')
+
+    ax[1][0].set_ylabel('# entries')
+    ax[1][0].set_xlabel('Hit y position')
+    if len(yrange)==0:
+        bins=np.histogram(np.hstack((all_y,all_y_gen)), bins=50)[1]
+        ax[1][0].hist(all_y, bins=bins, alpha=0.5, color='orange', label='Geant4')
+        ax[1][0].hist(all_y_gen, bins=bins, alpha=0.5, color='blue', label='Gen')
+    else:
+        ax[1][0].hist(all_y, bins=40, range=yrange, alpha=0.5, color='orange', label='Geant4')
+        ax[1][0].hist(all_y_gen, bins=40, range=yrange, alpha=0.5, color='blue', label='Gen')
+    ax[1][0].set_yscale('log')
+    ax[1][0].legend(loc='upper right')
+
+    ax[1][1].set_ylabel('# entries')
+    ax[1][1].set_xlabel('Hit z position')
+    if len(zrange)==0:
+        bins=np.histogram(np.hstack((all_z,all_z_gen)), bins=50)[1]
+        ax[1][1].hist(all_z, bins=bins, alpha=0.5, color='orange', label='Geant4')
+        ax[1][1].hist(all_z_gen, bins=bins, alpha=0.5, color='blue', label='Gen')
+    else:
+        ax[1][1].hist(all_z, bins=10, range=zrange, alpha=0.5, color='orange', label='Geant4')
+        ax[1][1].hist(all_z_gen, bins=10, range=zrange, alpha=0.5, color='blue', label='Gen')
+    ax[1][1].set_yscale('log')
+    ax[1][1].legend(loc='upper right')
+
+    bins=np.histogram(np.hstack((all_incident_e,all_incident_e_gen)), bins=25)[1]
+    ax[1][2].set_ylabel('# entries')
+    ax[1][2].set_xlabel('Incident energies [GeV]')
+    ax[1][2].hist(all_incident_e, bins, alpha=0.5, color='orange', label='Geant4')
+    ax[1][2].hist(all_incident_e_gen, bins, alpha=0.5, color='blue', label='Gen')
+    ax[1][2].set_yscale('log')
+    ax[1][2].legend(loc='upper right')
+
+    bins=np.histogram(np.hstack((average_e_shower_geant,average_e_shower_gen)), bins=25)[1]
+    ax[2][0].set_ylabel('# entries')
+    ax[2][0].set_xlabel('Mean hit energy [GeV]')
+    ax[2][0].hist(average_e_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
+    ax[2][0].hist(average_e_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
+    ax[2][0].set_yscale('log')
+    ax[2][0].legend(loc='upper right')
+
+    bins=np.histogram(np.hstack((average_x_shower_geant,average_x_shower_gen)), bins=25)[1]
+    ax[2][1].set_ylabel('# entries')
+    ax[2][1].set_xlabel('Shower Mean X')
+    ax[2][1].hist(average_x_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
+    ax[2][1].hist(average_x_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
+    ax[2][1].set_yscale('log')
+    ax[2][1].legend(loc='upper right')
+
+    bins=np.histogram(np.hstack((average_y_shower_geant,average_y_shower_gen)), bins=25)[1]
+    ax[2][2].set_ylabel('# entries')
+    ax[2][2].set_xlabel('Shower Mean Y')
+    ax[2][2].hist(average_y_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
+    ax[2][2].hist(average_y_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
+    ax[2][2].set_yscale('log')
+    ax[2][2].legend(loc='upper right')
+    
+    print(f'Saving comparison plots to: {sampling_directory}') 
+    plt.savefig( os.path.join(sampling_directory,'comparison.png') )
+
+    return fig

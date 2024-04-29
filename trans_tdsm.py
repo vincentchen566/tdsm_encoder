@@ -156,18 +156,19 @@ def train_model(files_list_, device='cpu'):
         if epoch%10 == 0:
             torch.save(model.state_dict(), os.path.join(output_directory, 'ckpt_tmp_'+str(epoch)+'.pth' ))
     
-    torch.save(model.state_dict(), os.path.join(output_directory, 'ckpt_tmp_'+str(epoch)+'.pth' ))
-    return os.path.join(output_directory, 'ckpt_tmp_'+str(epoch)+'.pth' )
+    save_name = os.path.join(output_directory, 'ckpt_tmp_'+str(epoch)+'.pth' )
+    torch.save(model.state_dict(), save_name)
+    return save_name
 
 
-def generate(files_list_, device='cpu', model_name=''):
+def generate(files_list_, load_filename, device='cpu'):
 
     wd = os.getcwd()
     output_file = 'sampling_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
     output_directory = os.path.join(wd, output_file)
     print('Sampling directory: ', output_directory)
     if not os.path.exists(output_directory):
-      os.system('mkdir -p {}'.format(output_directory))
+        os.makedirs(output_directory)
     config = wandb.config
 
     # Instantiate stochastic differential equation
@@ -180,7 +181,11 @@ def generate(files_list_, device='cpu', model_name=''):
 
     # Load saved model
     model=score_model.Gen(config.n_feat_dim, config.embed_dim, config.hidden_dim, config.num_encoder_blocks, config.num_attn_heads, config.dropout_gen, marginal_prob_std=marginal_prob_std_fn)
-    load_name = os.path.join(wd, model_name)
+    if load_filename == '':
+        load_name = os.path.join(wd,'training_20240408_1350_output/ckpt_tmp_299.pth')
+    else:
+        load_name = os.path.join(wd,load_filename)
+
     model.load_state_dict(torch.load(load_name, map_location=device))
     model.to(device)
 
@@ -191,22 +196,15 @@ def generate(files_list_, device='cpu', model_name=''):
     geant_ine = np.array([])
     N_geant_showers = 0
 
-    # For diffusion plots in 'physical' feature space, add files here
-    energy_trans_file = ''
-    x_trans_file = ''
-    y_trans_file = ''
-    ine_trans_file = ''
-
-    # Load saved pre-processor
-    if ine_trans_file != '':
-        print(f'energy_trans_file: {energy_trans_file}')
-        scalar_ine = load(open(ine_trans_file, 'rb'))
-    if energy_trans_file != '':
-        scalar_e = load(open(energy_trans_file, 'rb'))
-    if x_trans_file != '':
-        scalar_x = load(open(x_trans_file, 'rb'))
-    if y_trans_file != '':
-        scalar_y = load(open(y_trans_file, 'rb'))
+    # Step to plot
+    N_steps_2_plot = 5
+    plotsteps = []
+    tmp_step = 0
+    plotsteps.append(tmp_step)
+    stepsize=round(config.sampler_steps/N_steps_2_plot, 0)
+    for i in range(N_steps_2_plot):
+        tmp_step = tmp_step+stepsize
+        plotsteps.append(tmp_step)
     
     n_files = len(files_list_)
     nshowers_per_file = [config.n_showers_2_gen//n_files for x in range(n_files)]
@@ -218,7 +216,7 @@ def generate(files_list_, device='cpu', model_name=''):
     # create list to store final samples
     sample_ = []
     # instantiate sampler 
-    sampler = samplers.pc_sampler(sde=sde, padding_value=0.0, snr=0.16, sampler_steps=config.sampler_steps, device=device, jupyternotebook=False)
+    sampler = samplers.pc_sampler(sde=sde, padding_value=0.0, snr=0.16, sampler_steps=config.sampler_steps, steps2plot=plotsteps, device=device, jupyternotebook=False)
 
     # Collect Geant4 shower information
     for file_idx in range(len(files_list_)):
@@ -270,26 +268,18 @@ def generate(files_list_, device='cpu', model_name=''):
                     all_ine = energy_np[j].reshape(-1,1)
 
                     # Rescale the conditional input for each shower
-                    if ine_trans_file != '':
-                        all_ine = scalar_ine.inverse_transform(all_ine)
                     all_ine = all_ine.flatten().tolist()
                     geant_ine = np.append(geant_ine,all_ine[0])
                     
                     all_e = valid_hits[:,0].reshape(-1,1)
-                    if energy_trans_file != '':
-                        all_e = scalar_e.inverse_transform(all_e)
                     all_e = all_e.flatten().tolist()
                     geant_deposited_energy.append( sum( all_e ) )
                     
                     all_x = valid_hits[:,1].reshape(-1,1)
-                    if x_trans_file != '':
-                        all_x = scalar_x.inverse_transform(all_x)
                     all_x = all_x.flatten().tolist()
                     geant_x_pos.append( np.mean(all_x) )
                     
                     all_y = valid_hits[:,2].reshape(-1,1)
-                    if y_trans_file != '':
-                        all_y = scalar_y.inverse_transform(all_y)
                     all_y = all_y.flatten().tolist()
                     geant_y_pos.append( np.mean(all_y) )
 
@@ -302,7 +292,7 @@ def generate(files_list_, device='cpu', model_name=''):
 
         # Generate 2D pdf of incident E vs N valid hits from the training file(s)
         n_bins_prob_dist = 50
-        e_vs_nhits_prob, x_bin, y_bin = samplers.get_prob_dist(incident_e_per_shower, n_valid_hits_per_shower, n_bins_prob_dist)
+        e_vs_nhits_prob, x_bin, y_bin = sampler.get_prob_dist( incident_e_per_shower, n_valid_hits_per_shower, n_bins_prob_dist )
 
         # Plot 2D histogram (sanity check)
         fig0, (ax0) = plt.subplots(ncols=1, sharey=True)
@@ -327,7 +317,7 @@ def generate(files_list_, device='cpu', model_name=''):
             sampled_ine = torch.cat([sampled_ine,in_energies])
 
         # Sample from 2D pdf = nhits per shower vs incident energies -> nhits and a tensor of randomly initialised hit features
-        nhits, gen_hits = samplers.generate_hits(e_vs_nhits_prob, x_bin, y_bin, in_energies, 4, device=device)
+        nhits, gen_hits = sampler.generate_hits(e_vs_nhits_prob, x_bin, y_bin, in_energies, 4, device=device)
 
         # Save
         torch.save([gen_hits, in_energies],'tmp.pt')
@@ -353,8 +343,8 @@ def generate(files_list_, device='cpu', model_name=''):
             sys.stdout.flush()
             
             # Run reverse diffusion sampler
-            generative = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, gen_hit, batch_size=gen_hit.shape[0], energy_trans_file=energy_trans_file, x_trans_file=x_trans_file , y_trans_file = y_trans_file, ine_trans_file=ine_trans_file)
-            
+            #generative = sampler(model, marginal_prob_std_fn, diffusion_coeff_fn, sampled_energies, gen_hit, batch_size=gen_hit.shape[0], energy_trans_file=energy_trans_file, x_trans_file=x_trans_file , y_trans_file = y_trans_file, ine_trans_file=ine_trans_file)
+            generative = sampler(model, sampled_energies, gen_hit, batch_size=gen_hit.shape[0])
             # Create first sample or concatenate sample to sample list
             if i == 0:
                 sample = generative
@@ -366,110 +356,21 @@ def generate(files_list_, device='cpu', model_name=''):
         sample_np = sample.cpu().numpy()
 
         for i in range(len(sample_np)):
-            tmp_sample = sample_np[i]#[:nhits[i]]
+            tmp_sample = sample_np[i]
             sample_.append(torch.tensor(tmp_sample))
     
     print(f'sample_: {len(sample_)}, sampled_ine: {len(sampled_ine)}')
-    torch.save([sample_,sampled_ine], os.path.join(output_directory, 'sample.pt'))
+    sample_savename = os.path.join(output_directory, 'sample.pt')
+    torch.save([sample_,sampled_ine], sample_savename)
 
-    # Create plots of distributions evolving with diffusion steps
-    print(f'Drawing diffusion plots for average hit X & Y positions')
-    distributions = [
-    ( ('X', 'Y'), 
-    (geant_x_pos,
-    geant_y_pos,
-    sampler.av_x_pos_step1,
-    sampler.av_y_pos_step1, 
-    sampler.av_x_pos_step25,
-    sampler.av_y_pos_step25,
-    sampler.av_x_pos_step50,
-    sampler.av_y_pos_step50,
-    sampler.av_x_pos_step75,
-    sampler.av_y_pos_step75,
-    sampler.av_x_pos_step99,
-    sampler.av_y_pos_step99) )
-    ]
-    display.make_diffusion_plot(distributions, output_directory)
-
-    print(f'Drawing diffusion plots for average hit X positions and energies')
-    distributions = [
-    ( ('X', 'Total deposited energy [GeV]'), 
-    (geant_x_pos,
-    geant_deposited_energy,
-    sampler.av_x_pos_step1,
-    sampler.deposited_energy_step1, 
-    sampler.av_x_pos_step25,
-    sampler.deposited_energy_step25,
-    sampler.av_x_pos_step50,
-    sampler.deposited_energy_step50,
-    sampler.av_x_pos_step75,
-    sampler.deposited_energy_step75,
-    sampler.av_x_pos_step99,
-    sampler.deposited_energy_step99) )
-    ]
-    display.make_diffusion_plot(distributions, output_directory)
-    print(f'Drawing diffusion plots for average hit energies and incident energy')
-    distributions = [
-    ( ('Total deposited energy', 'Incident particle energy [GeV]'), 
-    (geant_deposited_energy,
-    geant_ine,
-    sampler.deposited_energy_step1,
-    sampler.incident_e_step1, 
-    sampler.deposited_energy_step25,
-    sampler.incident_e_step25,
-    sampler.deposited_energy_step50,
-    sampler.incident_e_step50,
-    sampler.deposited_energy_step75,
-    sampler.incident_e_step75,
-    sampler.deposited_energy_step99,
-    sampler.incident_e_step99) )
-    ]
-    display.make_diffusion_plot(distributions, output_directory)
-
-    print('Plot hit energies')
-    fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1,5, figsize=(27,9))
-    bins=np.histogram(np.hstack((geant_deposited_energy,sampler.deposited_energy_step1)), bins=50)[1]
-    ax1.set_title('t=1')
-    ax1.set_ylabel('# entries')
-    ax1.set_xlabel('Total deposited energy [GeV]')
-    ax1.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
-    ax1.hist(sampler.deposited_energy_step1, bins, alpha=0.5, color='blue', label='Gen')
-    ax1.set_yscale('log')
-    ax1.legend(loc='upper right')
-    
-    ax2.set_title('t=0.2')
-    ax2.set_ylabel('# entries')
-    ax2.set_xlabel('Total deposited energy [GeV]')
-    ax2.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
-    ax2.hist(sampler.deposited_energy_step25, bins, alpha=0.5, color='blue', label='Gen')
-    ax2.set_yscale('log')
-    ax2.legend(loc='upper right')
-
-    ax3.set_title('t=0.1')
-    ax3.set_ylabel('# entries')
-    ax3.set_xlabel('Total deposited energy [GeV]')
-    ax3.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
-    ax3.hist(sampler.deposited_energy_step50, bins, alpha=0.5, color='blue', label='Gen')
-    ax3.set_yscale('log')
-    ax3.legend(loc='upper right')
-
-    ax4.set_title('t=0.05')
-    ax4.set_ylabel('# entries')
-    ax4.set_xlabel('Total deposited energy [GeV]')
-    ax4.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
-    ax4.hist(sampler.deposited_energy_step75, bins, alpha=0.5, color='blue', label='Gen')
-    ax4.set_yscale('log')
-    ax4.legend(loc='upper right')
-
-    ax5.set_title('t=0.0')
-    ax5.set_ylabel('# entries')
-    ax5.set_xlabel('Total deposited energy [GeV]')
-    ax5.hist(geant_deposited_energy, bins, alpha=0.5, color='orange', label='Geant4')
-    ax5.hist(sampler.deposited_energy_step99, bins, alpha=0.5, color='blue', label='Gen')
-    ax5.set_yscale('log')
-    ax5.legend(loc='upper right')
-
-    fig.savefig(os.path.join(output_directory,'total_deposited_energy_diffusion.png'))
+    gen_data = utils.cloud_dataset(sample_savename,device=device)
+    # Generated distributions
+    dists_gen = display.plot_distribution(gen_data, nshowers_2_plot=config.n_showers_2_gen, padding_value=0.0)
+    # Distributions object for Geant4 files
+    dists = display.plot_distribution(files_list_, nshowers_2_plot=config.n_showers_2_gen, padding_value=0.0)
+    comparison_fig = display.comparison_summary(dists, dists_gen, output_directory)#, erange=(-5,3), xrange=(-2.5,2.5), yrange=(-2.5,2.5), zrange=(0,1))
+    # Add evaluation plots to keep on wandb
+    wandb.log({"summary" : wandb.Image(comparison_fig)})
 
 def main(config=None):
    
@@ -604,11 +505,19 @@ def main(config=None):
         train_model_name = "/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/training_20230830_1430_output/ckpt_tmp_499.pth" #Default model name 
         #### Training ####
         if switches_>>1 & trigger:
-            train_model_name = train_model(files_list_, device=device)
+            trained_model_name = train_model(files_list_, device=device)
         
         #### Sampling ####
         if switches_>>2 & trigger:
-            generate(files_list_, device=device, model_name = train_model_name)
+            # If a new training was run and you want to use it
+            if switches_>>1 & trigger:
+                generate(files_list_, load_filename=trained_model_name, device=device)
+            # To use an older training file
+            # n.b. you'll need to make sure the config hyperparams are the same as the model being used
+            else:
+                trained_model_name = 'training_20240408_1350_output/ckpt_tmp_299.pth'
+                generate(files_list_, load_filename=trained_model_name, device=device)
+            
 
         #### Evaluation plots ####
         if switches_>>3 & trigger:
@@ -742,7 +651,6 @@ if __name__=='__main__':
     argparser.add_argument('-c', '--config', dest='config', help='Configuration file for parameter monitoring', default='', type=str)
     args = argparser.parse_args()
     
-    start = time.time()
     # WandB configuration
     cfg_name = args.config
 
@@ -761,8 +669,4 @@ if __name__=='__main__':
     n_runs = 1
     sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
     wandb.agent(sweep_id, main, count=n_runs)
-
-    fin = time.time()
-    elapsed_time = fin-start
-    print('Time elapsed: {:3f}'.format(elapsed_time))
 
