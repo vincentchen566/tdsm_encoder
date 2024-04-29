@@ -24,12 +24,11 @@ class cloud_dataset(Dataset):
   def __getitem__(self, index):
     x = self.data[index]
     y = self.condition[index]
-    w = self.weight[index]
     if self.transform:
         x = self.transform(x,y,self.device)
     if self.transform_y:
        y = self.transform_y(y, self.min_y, self.max_y)
-    return x,y,w
+    return x,y
   
   def __len__(self):
     return len(self.data)
