@@ -211,7 +211,7 @@ def main():
     n_plots = len(plots)
     # 9x16 radial x angular / eta x phi bins, 45 layers
     n_bins = [30,30,9,16,45]
-    plotter = display.recursive_plot(len(plots), name1, plots, n_bins, titles)
+    plotter = display.recursive_plot(len(plots), name1, plots, titles, n_bins)
     plotter.rec_plot()
 
     # Save file name
