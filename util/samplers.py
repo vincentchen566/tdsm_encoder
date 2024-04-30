@@ -50,6 +50,8 @@ class pc_sampler:
         self.incident_e_stages = { x:[] for x in self.steps2plot }
         
         self.serialized_model = serialized_model
+        self.hist_bins = [np.linspace(-5., 5., 101), np.linspace(-0.25, sampler_steps + 0.75, sampler_steps*2 + 2)] 
+        self.hist = None
 
     def random_sampler(self, pdf,xbin):
         myCDF = np.zeros_like(xbin,dtype=float)
@@ -100,8 +102,8 @@ class pc_sampler:
             y_pred.append( ytmp )
         return pred_nhits, y_pred
     
-    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
-        
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False, corrector_steps=100):
+       
         # Padding masks defined by initial # hits / zero padding
         attn_padding_mask = (init_x[:,:,0] == self.padding_value).type(torch.bool)
         # Time array
@@ -122,8 +124,17 @@ class pc_sampler:
             sampled_energies = sampled_energies.to(x.device, torch.float32)
             # Noise to add to input
             z = torch.normal(0,1,size=x.shape, device=x.device)
+           
+            # Diffusion flow plot
+            x_to_hist = x[:,:,0].view(-1).cpu().numpy().copy()
+            t_to_hist = np.ones(len(x_to_hist)) * 0
+            hist_,_,_ = np.histogram2d(x_to_hist, t_to_hist, bins = self.hist_bins)
+            if self.hist is None:
+                self.hist = hist_
+
             # Iterate through time steps
-            for time_step in time_steps:
+            for time_idx, time_step in enumerate(time_steps):
+                
                 # Input shower = noise * std from SDE
                 if not diffusion_on_mask:
                     x = x*mask_tensor
@@ -137,6 +148,8 @@ class pc_sampler:
                     grad = score_model([x, batch_time_step, sampled_energies, attn_padding_mask])
                 else:
                     grad = score_model(x, batch_time_step, sampled_energies, mask=attn_padding_mask)
+                
+                nc_steps = corrector_steps
                 self.step_scores[diffusion_step_].extend(grad[1,:,0].cpu().tolist() )
                 self.step_hite[diffusion_step_].extend(x[1,:,0].cpu().tolist())
                 self.step_hitx[diffusion_step_].extend(x[1,:,1].cpu().tolist())
@@ -183,7 +196,6 @@ class pc_sampler:
                     self.av_y_stages[diffusion_step_].extend(step_av_y_pos)
                 
                 # Corrector step (Langevin MCMC)
-                nc_steps = 100
                 for n_ in range(nc_steps):
                     # Langevin corrector
                     noise = torch.normal(0,1,size=x.shape, device=x.device)
@@ -202,6 +214,16 @@ class pc_sampler:
                     x = x_mean + torch.sqrt(2 * langevin_step_size) * noise
                     if not diffusion_on_mask:
                         x = x*mask_tensor
+              
+                x_to_hist = x[:,:,0].view(-1).cpu().numpy().copy()
+                t_to_hist = np.ones(len(x_to_hist)) * (time_idx + 0.5)
+                hist_,_,_ = np.histogram2d(x_to_hist, t_to_hist, bins = self.hist_bins)
+                if self.hist is None:
+                  self.hist = hist_
+                else:
+                  self.hist = self.hist + hist_
+                # Euler-Maruyama Predictor
+                # Adjust inputs according to scores
                 
                 ### Euler-Maruyama Predictor ###
                 
@@ -222,6 +244,15 @@ class pc_sampler:
                 
                 # Add the diffusion term of the reverse SDE
                 x = x_mean + torch.sqrt(diff**2*step_size)[:, None, None] * z
+
+                x_to_hist = x[:,:,0].view(-1).cpu().numpy().copy()
+                t_to_hist = np.ones(len(x_to_hist)) * (time_idx + 1)
+                hist_,_,_ = np.histogram2d(x_to_hist, t_to_hist, bins = self.hist_bins)
+                if self.hist is None:
+                  self.hist = hist_
+                else:
+                  self.hist = self.hist + hist_          
+
                 
                 ### For plots of reverse drift/diffusion ###
                 self.step_revdrift[diffusion_step_].extend(drift[1,:,0].cpu().tolist() )
@@ -264,14 +295,15 @@ class pc_sampler:
                     self.deposited_energy_stages[diffusion_step_].extend(step_deposited_energy)
                     self.av_x_stages[diffusion_step_].extend(step_av_x_pos)
                     self.av_y_stages[diffusion_step_].extend(step_av_y_pos)
-                       
+                
+                
                 diffusion_step_+=1
                 
         # Do not include noise in last step
         return x_mean
 
 class new_pc_sampler:
-    def __init__(self, sde, padding_value, snr=0.2, sampler_steps=100, steps2plot=(), device='cuda', eps=1e-3, jupyternotebook=False):
+    def __init__(self, sde, padding_value, snr=0.2, sampler_steps=100, steps2plot=(), device='cuda', eps=1e-3, jupyternotebook=False, serialized_model=False):
         ''' Generate samples from score based models with Predictor-Corrector method
             Args:
             score_model: A PyTorch model that represents the time-dependent score-based model.
@@ -306,13 +338,15 @@ class new_pc_sampler:
         self.av_x_stages = { x:[] for x in self.steps2plot}
         self.av_y_stages = { x:[] for x in self.steps2plot}
         self.incident_e_stages = { x:[] for x in self.steps2plot}
-    
-    def __call__(self, score_model, sampled_energies, init_x, batch_size=1):
+        self.serialized_model = serialized_model
+
+    def __call__(self, score_model, sampled_energies, init_x, batch_size=1, diffusion_on_mask=False):
         
         # Time array
         #t = torch.ones(batch_size, device=self.device)
         # Padding masks defined by initial # hits / zero padding
         padding_mask = (init_x[:,:,0]== self.padding_value).type(torch.bool)
+        mask_tensor  = (~padding_mask).float()[...,None]
         # Create array of time steps
         #time_steps = np.linspace(1., self.eps, self.sampler_steps)
         #step_size = time_steps[0]-time_steps[1]
@@ -321,6 +355,7 @@ class new_pc_sampler:
         epsilon_rel=0.05
         theta=0.9
         r=0.9
+
         #r=0.5
 
         #if self.jupyternotebook:
@@ -355,18 +390,25 @@ class new_pc_sampler:
                 z = torch.normal(0,1,size=x.shape, device=x.device)
                 
                 # Conditional score prediction gives estimate of noise to remove
-                grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
+                if not diffusion_on_mask:
+                    x = x*mask_tensor
+                    z = z*mask_tensor
+
+                if self.serialized_model:
+                  grad = score_model([x, batch_time_step, sampled_energies, padding_mask])
+                else:
+                  grad = score_model(x, batch_time_step, sampled_energies, mask=padding_mask)
 
                 drift, diff = self.diffusion_coeff_fn(x,batch_time_step)
 
                 #print("drift:",drift)
                 #print("diff:",diff)
 
-                drift=drift.to('cuda:0')
-                diff=diff.to('cuda:0')
+                drift=drift.to(self.device)
+                diff=diff.to(self.device)
                 #score_model=score_model.to('cuda:0') 
 
-                x_pron=x-h*drift+h*(diff**2)[:,None,None]*score_model(x, batch_time_step, sampled_energies, mask=padding_mask)+h**0.5*(diff)[:,None,None]*z
+                x_pron=x-h*drift+h*(diff**2)[:,None,None]*grad+h**0.5*(diff)[:,None,None]*z
 
                 #print("x':",x_pron)
 
@@ -376,12 +418,24 @@ class new_pc_sampler:
                 #print("diff_pron:",diff_pron)
                 #print("score_model:",score_model(x_pron, batch_time_step_pron, sampled_energies, mask=padding_mask))
 
-                drift_pron=drift_pron.to('cuda:0')
-                diff_pron=diff_pron.to('cuda:0')
+                drift_pron=drift_pron.to(self.device)
+                diff_pron=diff_pron.to(self.device)
                 #score_model=score_model.to('cuda:0')
 
-                x_tilta=x-h*drift_pron+h*(diff_pron**2)[:,None,None]*score_model(x_pron, batch_time_step_pron, sampled_energies, mask=padding_mask)+h**0.5*(diff_pron)[:,None,None]*z
+                if not diffusion_on_mask:
+                  x_pron = x_pron * mask_tensor
 
+                if self.serialized_model:
+                  grad_pron = score_model([x_pron, batch_time_step_pron, sampled_energies, padding_mask])
+                else:
+                  grad_pron = score_model(x_pron, batch_time_step_pron, sampled_energies, mask=padding_mask)
+
+
+                x_tilta=x-h*drift_pron+h*(diff_pron**2)[:,None,None]*grad_pron+h**0.5*(diff_pron)[:,None,None]*z
+
+
+                if not diffusion_on_mask:
+                  x_tilta = x_tilta * mask_tensor
                 #print("x_tilta:",x_tilta)
 
                 x_pron_pron=0.5*(x_pron+x_tilta)
@@ -392,10 +446,10 @@ class new_pc_sampler:
 
                 #print("delta:",delta)
 
-                x=x.to('cuda:0')
-                x_pron=x_pron.to('cuda:0')
-                x_pron_pron=x_pron_pron.to('cuda:0')
-                delta=delta.to('cuda:0')
+                x=x.to(self.device)
+                x_pron=x_pron.to(self.device)
+                x_pron_pron=x_pron_pron.to(self.device)
+                delta=delta.to(self.device)
 
                 #E=1/((x.shape[0])**(0.5))*torch.linalg.norm(((x_pron-x_pron_pron)/delta).reshape(x.shape[0],-1), dim=-1).mean()
                 E=1./((x.shape[0])**(0.5))*torch.linalg.norm(((x_pron-x_pron_pron)/delta))
@@ -421,5 +475,6 @@ class new_pc_sampler:
                 
         # Do not include noise in last step
         #x_mean = x_mean
-        return x
-    
+        if not diffusion_on_mask:
+          x = x * mask_tensor
+        return x  

@@ -14,12 +14,14 @@ from torch.utils.data import Dataset, DataLoader
 # TDSM libs
 # needs to be full path on afs
 sys.path.insert(0, '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/util')
+sys.path.insert(1, 'util') # Local path / user independent
 import data_utils as utils
 import score_model as score_model
 import sdes as sdes
 import display
 import samplers as samplers
-
+import Convertor as Convertor
+from Convertor import Preprocessor
 import wandb
 os.environ['WANDB_NOTEBOOK_NAME'] = 'NCSM_condor'
 wandb.login()
@@ -50,8 +52,8 @@ def train_model(files_list_, device='cpu'):
     config = wandb.config
     print(f'training config: {config}')
 
-    #wd = os.getcwd()
-    wd = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/'
+    wd = os.getcwd()
+    #wd = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/'
     output_files = 'training_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
     output_directory = os.path.join(wd, output_files)
     print('Training directory: ', output_directory)
@@ -94,6 +96,9 @@ def train_model(files_list_, device='cpu'):
     eps_ = []
     batch_ct = 0
     for epoch in range(0, config.epochs ):
+        sys.stdout.write('\r')
+        sys.stdout.write('Progress: %d/%d'%((epoch+1), config.epochs)) # Local Progress Tracker
+        sys.stdout.flush()
         eps_.append(epoch)
 
         # Create/clear per epoch variables
@@ -165,7 +170,6 @@ def generate(files_list_, load_filename, device='cpu'):
     print('Sampling directory: ', output_directory)
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
-
     config = wandb.config
 
     # Instantiate stochastic differential equation
@@ -368,7 +372,7 @@ def generate(files_list_, load_filename, device='cpu'):
     comparison_fig = display.comparison_summary(dists, dists_gen, output_directory)#, erange=(-5,3), xrange=(-2.5,2.5), yrange=(-2.5,2.5), zrange=(0,1))
     # Add evaluation plots to keep on wandb
     wandb.log({"summary" : wandb.Image(comparison_fig)})
-
+    return output_directory
 def main(config=None):
    
     indir = args.inputs
@@ -403,11 +407,11 @@ def main(config=None):
     padding_value = 0.0
 
     # List of training input files
-    training_file_path = os.path.join('/eos/user/j/jthomasw/tdsm_encoder/datasets/', indir)
+    training_file_path = os.path.join(indir) # change indir to be absolute path
     files_list_ = []
     print(f'Training files found in: {training_file_path}')
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry424To564*.pt'):
+        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry1033To1161*.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
@@ -498,6 +502,8 @@ def main(config=None):
             save_name = os.path.join(training_file_path,'input_dists_transformed.png')
             fig.savefig(save_name)
 
+
+        train_model_name = "/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/training_20230830_1430_output/ckpt_tmp_499.pth" #Default model name 
         #### Training ####
         if switches_>>1 & trigger:
             trained_model_name = train_model(files_list_, device=device)
@@ -506,19 +512,22 @@ def main(config=None):
         if switches_>>2 & trigger:
             # If a new training was run and you want to use it
             if switches_>>1 & trigger:
-                generate(files_list_, load_filename=trained_model_name, device=device)
+                output_directory = generate(files_list_, load_filename=trained_model_name, device=device)
             # To use an older training file
             # n.b. you'll need to make sure the config hyperparams are the same as the model being used
             else:
-                trained_model_name = 'training_20240408_1350_output/ckpt_tmp_299.pth'
-                generate(files_list_, load_filename=trained_model_name, device=device)
+#                trained_model_name = 'training_20240408_1350_output/ckpt_tmp_299.pth'
+                trained_model_name = 'training_20240429_1211_output/ckpt_tmp_2.pth'
+                output_directory = generate(files_list_, load_filename=trained_model_name, device=device)
             
 
         #### Evaluation plots ####
         if switches_>>3 & trigger:
             # Distributions object for generated files
             print(f'Generated inputs')
-            output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230829_1606_output')
+            workingdir = os.getcwd()
+            if not switches_>>2 & trigger:
+              output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230829_1606_output')
             print(f'Evaluation outputs stored here: {output_directory}')
             plot_file_name = os.path.join(output_directory, 'sample.pt')
             custom_data = utils.cloud_dataset(plot_file_name,device=device)
@@ -637,6 +646,25 @@ def main(config=None):
             fig.savefig(fig_name)
 
 
+
+            # Convert Generated file
+            Converter_ = Convertor.Convertor(plot_file_name, 0.0, preprocessor=args.preprocessor)
+            Converter_.invert(-99)
+            Converter_.digitize()
+            Converter_.to_h5py(os.path.join(output_directory, 'Gen.h5'))
+            # Convert Reference file: TODO: multifile management
+            Converter_ = Convertor.Convertor(files_list_[0], 0.0, preprocessor=args.preprocessor)
+            Converter_.invert(-99)
+            Converter_.digitize()
+            Converter_.to_h5py(os.path.join(output_directory, 'Reference.h5'))
+
+   
+            print(('python util/evaluate_image_based.py --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score'))))
+            os.system('python util/evaluate_image_based.py --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score')))
+            wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'reference_average_shower_dataset_2.png'))})
+            wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'average_shower_dataset_2.png'))})
+
+
 if __name__=='__main__':
 
     usage=''
@@ -644,6 +672,7 @@ if __name__=='__main__':
     argparser.add_argument('-s','--switches',dest='switches', help='Binary representation of switches that run: evaluation plots, training, sampling, evaluation plots', default='0000', type=str)
     argparser.add_argument('-i','--inputs',dest='inputs', help='Path to input directory', default='', type=str)
     argparser.add_argument('-c', '--config', dest='config', help='Configuration file for parameter monitoring', default='', type=str)
+    argparser.add_argument('-p', '--preprocessor', dest='preprocessor', help='pickle files of preprocessor', default='', type=str)
     args = argparser.parse_args()
     
     # WandB configuration
@@ -661,7 +690,7 @@ if __name__=='__main__':
     # Run main function using sweep agents reading from configs
     # Sweeps run by setting range of parameter values to explore, else set single parameter value
     # Running from yaml files facilitates submitting (several) jobs to condor
-    n_runs = 2
+    n_runs = 1
     sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
     wandb.agent(sweep_id, main, count=n_runs)
 

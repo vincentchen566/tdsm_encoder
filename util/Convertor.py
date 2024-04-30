@@ -6,9 +6,101 @@ import matplotlib.pyplot as plt
 from util.XMLHandler import XMLHandler
 import pandas as pd
 import util.Evaluate
-from datasets.pad_events_threshold import Preprocessor
 import pickle
 import h5py
+
+class Preprocessor:
+    def __init__(self):
+        self.maxe_ = 1000.
+        self.mine_ = 1.
+        self.maxz_ = 0.0
+        self.minz_ = 44.0
+
+    ########################
+    ##  Incident  Energy  ##
+    ########################
+
+    def fit_incident_energy(self, ine_):
+        self.maxe_ = np.max(ine_)
+        self.mine_ = np.min(ine_)
+        return
+
+    def transform_incident_energy(self, ine_):
+        new_ine = (ine_ - self.mine_) / (self.maxe_ - self.mine_)
+        return new_ine
+
+    def inverse_transform_incident_energy(self, ine_):
+        new_ine = (self.maxe_ - self.mine_)*ine_ + self.mine_
+        return new_ine
+
+    ######################
+    ##  Transform XYZE  ##
+    ######################
+
+    def fit(self,Z):
+      if self.maxz_ is None:
+        self.maxz_ = np.max(Z)
+        self.minz_ = np.min(Z)
+      else:
+        self.maxz_ = max(np.max(Z), self.maxz_)
+        self.minz_ = min(np.min(Z), self.minz_)
+
+
+    def transform_hit_xy(self, hit_pos):
+      new_pos = 1/(1+np.exp(-0.07*hit_pos))
+      new_pos = np.nan_to_num(new_pos)
+      new_pos = np.reshape(new_pos, (-1,))
+      return new_pos
+
+    def inverse_transform_hit_xy(self, new_pos, mask, new_padding_value):
+      new_pos = np.log(1./new_pos - 1)/(-0.07)
+      pad  = np.ones((len(new_pos),1)) * new_padding_value
+      new_pos[mask] = pad[mask]
+      new_pos = np.nan_to_num(new_pos)
+      new_pos = np.reshape(new_pos, (-1,))
+      return new_pos
+
+    def transform_hit_z(self, z_):
+      z_ = (z_ - self.minz_) / (self.maxz_ - self.minz_)
+      return z_
+
+    def inverse_transform_hit_z(self, z_, mask, new_padding_value):
+      z_ = (self.maxz_ - self.minz_)*z_ + self.minz_
+      z_[mask] = (np.ones((len(z_),1)) * new_padding_value)[mask]
+      z_ = np.reshape(z_, (-1,))
+      return z_
+
+    def transform_hit_e(self, e_, incident_energy):
+      new_e = e_ / incident_energy
+      new_e = (np.log10(new_e) + 5.0)/3.0
+      new_e = np.nan_to_num(new_e)
+      new_e = np.reshape(new_e, (-1,))
+      return new_e
+
+    def inverse_transform_hit_e(self, e_, mask, new_padding_value, incident_energy):
+
+      new_e = (10**(3.0 * e_ - 5.0)) * incident_energy
+
+      new_e[mask] = (np.ones((len(new_e), 1))*new_padding_value)[mask]
+      new_e = np.reshape(new_e, (-1,))
+      return new_e
+
+    def transform(self, E,X,Y,Z, incident_energy):
+      new_E = self.transform_hit_e(E, incident_energy)
+      new_X = self.transform_hit_xy(X)
+      new_Y = self.transform_hit_xy(Y)
+      new_Z = self.transform_hit_z(Z)
+      return new_E, new_X, new_Y, new_Z
+
+    def inverse_transform_hit(self, E,X,Y,Z, incident_energy, padding_value, new_padding_value):
+      mask = (E == padding_value)
+      new_E = self.inverse_transform_hit_e(E, mask, new_padding_value, incident_energy)
+      new_X = self.inverse_transform_hit_xy(X, mask, new_padding_value)
+      new_Y = self.inverse_transform_hit_xy(Y, mask, new_padding_value)
+      new_Z = self.inverse_transform_hit_z(Z, mask, new_padding_value)
+      return new_E, new_X, new_Y, new_Z
+
+
 class Convertor:
     def __init__(self, dataset_name, label, padding_value = 0, device='cpu', preprocessor='datasets/test/dataset_2_padded_nentry1129To1269_preprocessor.pkl'):
 
@@ -37,14 +129,15 @@ class Convertor:
           Y_ = np.asarray((data_[0][:,2])).reshape(-1,1)
           Z_ = np.asarray((data_[0][:,3])).reshape(-1,1)
           inE_ = data_[1]
-          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.inverse_transform_hit(E_, X_, Y_, Z_, self.padding_value, new_padding_value)
           new_inE_ = self.preprocessor.inverse_transform_incident_energy(inE_)
+          new_inE_ = new_inE_.item()
+          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.inverse_transform_hit(E_, X_, Y_, Z_, new_inE_, self.padding_value, new_padding_value)
           new_E_ = torch.from_numpy( new_E_.flatten())
           new_X_ = torch.from_numpy( new_X_.flatten())
           new_Y_ = torch.from_numpy( new_Y_.flatten())
           new_Z_ = torch.from_numpy( new_Z_.flatten())
           invert_data.append(torch.stack((new_E_, new_X_, new_Y_, new_Z_),-1))
-          invert_inE.append(new_inE_.item())
+          invert_inE.append(new_inE_)
 
         self.dataset.data = invert_data
         self.dataset.inE  = torch.tensor(invert_inE, device=self.device)
@@ -59,8 +152,8 @@ class Convertor:
           Y_ = np.asarray((data_[0][:,2])).reshape(-1,1)
           Z_ = np.asarray((data_[0][:,3])).reshape(-1,1)
           mask = E_ == self.padding_value
-
-          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.transform(E_, X_, Y_, Z_)
+          inE_ = data[1]
+          new_E_, new_X_, new_Y_, new_Z_ = self.preprocessor.transform(E_, X_, Y_, Z_, inE_)
           mask = mask.reshape(np.shape(new_E_))
           new_E_[mask] = (np.ones(np.shape(new_E_)) * new_padding_value)[mask]
           new_X_[mask] = (np.ones(np.shape(new_X_)) * new_padding_value)[mask]
