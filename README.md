@@ -9,14 +9,18 @@ source /cvmfs/sft.cern.ch/lcg/views/LCG_102b_cuda/x86_64-centos7-gcc8-opt/setup.
 ```
 
 # Datasets
-Taking datasets from calochallenge atm. See calochallenge page for where to download datasets. Within the datasets directory one can find the pad_events.py script. Using this, one can pad showers to have the same size, allowing the batch computations implemented in our framework, and pre-process them however you want. The output is save in a .pt format in the same directory.
+Taking datasets from calochallenge atm. See calochallenge page for where to download datasets. Within the datasets directory one can find the pad_events_threshold.py script. Using this, one can pad showers to have the same size, allowing the batch computations implemented in our framework, and pre-process them however you want. The output is save in a .pt format in the same directory.
+```
+cd datasets
+python pad_events_threshold.py --indir [input directory] --outdir [output directory] --transform 1 --threshold [energy hits cut, by default -1 (no cut)]
+```
 
 # Training locally
 We provide a series of Jupyter notebooks that will help you run the full ML pipeline. From creating and playing with a representative toy dataset in order to speed up the optimisation process, to pre-processing, training, generating and evaluating using the CallChallenge datasets. 
 
 Once youve been through the notebooks, one can run the code locally and monitor its progress on WandB. The following command represents how to run a local training:
 ```
-python3 trans_tdsm.py -s <switches> -i <input dataset directory> -c <config file>
+python3 trans_tdsm.py -s <switches> -i <input dataset directory> -c <config file> --preprocessor <preprocessor pkl file>
 ```
 The following explains each of the arguments:
 - switches = Binary representation of switches that run: evaluation plots (1000), sampling (0100), training (0010), input_plots (0001)
