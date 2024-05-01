@@ -649,6 +649,7 @@ def main(config=None):
 
             # Convert Generated file
             Converter_ = Convertor.Convertor(plot_file_name, 0.0, preprocessor=args.preprocessor)
+#            Converter_ = Convertor.Convertor(files_list_[0], 0.0, preprocessor=args.preprocessor)
             Converter_.invert(-99)
             Converter_.digitize()
             Converter_.to_h5py(os.path.join(output_directory, 'Gen.h5'))
@@ -659,8 +660,7 @@ def main(config=None):
             Converter_.to_h5py(os.path.join(output_directory, 'Reference.h5'))
 
    
-            print(('python util/evaluate_image_based.py --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score'))))
-            os.system('python util/evaluate_image_based.py --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score')))
+            os.system('python util/evaluate_image_based.py -m avg --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score')))
             wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'reference_average_shower_dataset_2.png'))})
             wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'average_shower_dataset_2.png'))})
 
