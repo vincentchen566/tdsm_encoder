@@ -6,4 +6,5 @@ echo "$(nvidia-smi -L)"
 echo $CUDA_VISIBLE_DEVICES
 CFG_FILE=$(echo ${1} | cut -d '/' -f 3)
 echo $CFG_FILE
-python3 trans_tdsm.py -s 0010 -i ds2_diff_transforms -c $CFG_FILE
+PreProcessor=$2
+python3 trans_tdsm.py -s 0010 -i ds2_diff_transforms -c $CFG_FILE --preprocessor $PreProcessor
