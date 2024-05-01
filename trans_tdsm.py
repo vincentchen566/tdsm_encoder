@@ -208,10 +208,10 @@ def generate(files_list_, load_filename, device='cpu'):
         plotsteps.append(tmp_step)
     
     n_files = len(files_list_)
+    print(f'n_files: {n_files}')
     nshowers_per_file = [config.n_showers_2_gen//n_files for x in range(n_files)]
     r_ = config.n_showers_2_gen % nshowers_per_file[0]
     nshowers_per_file[-1] = nshowers_per_file[-1]+r_
-    print(f'# showers per file: {nshowers_per_file}')
     shower_counter = 0
 
     # create list to store final samples
@@ -411,7 +411,7 @@ def main(config=None):
     files_list_ = []
     print(f'Training files found in: {training_file_path}')
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry1033To1161*.pt'):
+        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry1129To1269.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
