@@ -13,7 +13,7 @@ source /cvmfs/sft.cern.ch/lcg/views/LCG_105a_cuda/x86_64-el9-gcc11-opt/setup.sh
 ```
 We have setup the capability to run on the CERN batch service while reporting using WandB. This allows the user to run several experiments with different settings in parallel on the GPU farm (individual config per job) or run hyperparameter sweeps (using a sweep config). Parrallel running is obviously faster but doesn't output the detailed hyperparameter information like ranking. In order to run on the lxplus machines, you need to: 
 
-1) "pip install --user wandb"  on the file system from which you submit your jobs
+1) ```pip install --user wandb```  on the file system from which you submit your jobs
 2) Ensure this installed wandb into the local python installation you want to use e.g. ~/.local/lib/python3.9/site-packages/
 3) Ensure this patch is added to your PYTHONPATH
 
