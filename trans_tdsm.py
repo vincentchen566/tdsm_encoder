@@ -332,6 +332,10 @@ def generate(files_list_, load_filename, device='cpu'):
 
         # Load the showers of noise
         gen_hits = utils.cloud_dataset('tmp.pt', device=device)
+
+        #Set the max_nhits according to geant4 data
+        gen_hits.max_nhits = max_hits
+        
         # Pad showers with values of 0
         gen_hits.padding(0.0)
         # Load len(gen_hits_loader) number of batches each with batch_size number of showers
