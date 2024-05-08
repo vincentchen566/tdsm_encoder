@@ -11,9 +11,14 @@ from torch.optim import Adam, RAdam
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import Dataset, DataLoader
 
+# WandB setup
+import wandb
+os.environ['WANDB_NOTEBOOK_NAME'] = 'NCSM_condor'
+wandb.login()
+
 # TDSM libs
-# needs to be full path on afs
-sys.path.insert(0, '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/util')
+# Adds util directory to directories interpreter will search for modules
+#sys.path.insert(0, '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/util')
 sys.path.insert(1, 'util') # Local path / user independent
 import data_utils as utils
 import score_model as score_model
@@ -22,9 +27,7 @@ import display
 import samplers as samplers
 import Convertor as Convertor
 from Convertor import Preprocessor
-import wandb
-os.environ['WANDB_NOTEBOOK_NAME'] = 'NCSM_condor'
-wandb.login()
+
 
 def train_log(loss, batch_ct, epoch):
     wandb.log({"epoch": epoch, "loss": loss}, step=batch_ct)
@@ -62,6 +65,8 @@ def train_model(files_list_, device='cpu'):
         os.makedirs(output_directory)
 
     # Instantiate stochastic differential equation
+    if config.SDE == 'subVP':
+        sde = sdes.subVPSDE(beta_max=config.sigma_max, beta_min=config.sigma_min, device=device)
     if config.SDE == 'VP':
         sde = sdes.VPSDE(beta_max=config.sigma_max, beta_min=config.sigma_min, device=device)
     if config.SDE == 'VE':
@@ -173,6 +178,8 @@ def generate(files_list_, load_filename, device='cpu'):
     config = wandb.config
 
     # Instantiate stochastic differential equation
+    if config.SDE == 'subVP':
+        sde = sdes.subVPSDE(beta_max=config.sigma_max, beta_min=config.sigma_min, device=device)
     if config.SDE == 'VP':
         sde = sdes.VPSDE(beta_max=config.sigma_max, beta_min=config.sigma_min, device=device)
     if config.SDE == 'VE':
@@ -411,7 +418,7 @@ def main(config=None):
     files_list_ = []
     print(f'Training files found in: {training_file_path}')
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry1129To1269.pt'):
+        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry1033To1161.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
@@ -503,7 +510,7 @@ def main(config=None):
             fig.savefig(save_name)
 
 
-        train_model_name = "/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/training_20230830_1430_output/ckpt_tmp_499.pth" #Default model name 
+        #train_model_name = "/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/training_20230830_1430_output/ckpt_tmp_499.pth" #Default model name 
         #### Training ####
         if switches_>>1 & trigger:
             trained_model_name = train_model(files_list_, device=device)
@@ -671,18 +678,19 @@ if __name__=='__main__':
     argparser = argparse.ArgumentParser(usage)
     argparser.add_argument('-s','--switches',dest='switches', help='Binary representation of switches that run: evaluation plots, training, sampling, evaluation plots', default='0000', type=str)
     argparser.add_argument('-i','--inputs',dest='inputs', help='Path to input directory', default='', type=str)
-    argparser.add_argument('-c', '--config', dest='config', help='Configuration file for parameter monitoring', default='', type=str)
+    argparser.add_argument('-c', '--config', dest='config', help='Configuration file for parameter monitoring (relative path)', default='', type=str)
     argparser.add_argument('-p', '--preprocessor', dest='preprocessor', help='pickle files of preprocessor', default='', type=str)
     args = argparser.parse_args()
     
     # WandB configuration
     cfg_name = args.config
+    print(f'Using config: {cfg_name}')
 
     project_name = cfg_name.split('.')[0].split('_',1)[1]
     print(f'Starting project: {project_name}')
 
-    if not os.path.exists(cfg_name):
-        cfg_name = os.path.join('../configs', cfg_name)
+    #if not os.path.exists(cfg_name):
+    #    cfg_name = os.path.join('../configs', cfg_name)
 
     with open(cfg_name) as ymlfile:
         sweep_yml = yaml.safe_load(ymlfile)

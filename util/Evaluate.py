@@ -7,15 +7,15 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.optim import Adam
 import matplotlib.pyplot as plt
-import util.score_model
+import score_model
 from sklearn.metrics import accuracy_score, confusion_matrix
 from scipy.stats import chisquare
-from util.XMLHandler import XMLHandler
+from XMLHandler import XMLHandler
 import math
 import tqdm
 import seaborn as sn
 import pandas as pd
-from util.pretty_confusion_matrix import pp_matrix
+from pretty_confusion_matrix import pp_matrix
 
 def digitize(tensor, bin_edges, device, middle='true', dtype=torch.float32):
     bin_edges = torch.tensor(bin_edges, device=torch.device(device))
