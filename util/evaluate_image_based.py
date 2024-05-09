@@ -52,7 +52,7 @@ import HighLevelFeatures as HLF
 
 from evaluate_plotting_helper import *
 
-torch.set_default_dtype(torch.float64)
+#torch.set_default_dtype(torch.float64)
 
 plt.rc('text', usetex=True)
 plt.rc('text.latex', preamble=r'\usepackage{amsmath,amssymb}')
@@ -201,8 +201,12 @@ def ttv_split(data1, data2, split=np.array([0.6, 0.2, 0.2])):
     """ splits data1 and data2 in train/test/val according to split,
         returns shuffled and merged arrays
     """
-    assert len(data1) == len(data2)
-    num_events = (len(data1) * split).astype(int)
+    nData = len(data1)
+    if not(len(data1) == len(data2)):
+      nData = min(len(data1), len(data2))
+      data1 = data1[:nData]
+      data2 = data2[:nData]
+    num_events = (nData * split).astype(int)
     np.random.shuffle(data1)
     np.random.shuffle(data2)
     train1, test1, val1 = np.split(data1, num_events.cumsum()[:-1])
@@ -222,6 +226,7 @@ def load_classifier(constructed_model, parser_args):
                             map_location=parser_args.device)
     constructed_model.load_state_dict(checkpoint['model_state_dict'])
     constructed_model.to(parser_args.device)
+    constructed_model.to(torch.float64)
     constructed_model.eval()
     print('classifier loaded successfully')
     return constructed_model
@@ -254,24 +259,29 @@ def train_cls(model, data_train, optim, epoch, arg):
     model.train()
     for i, data_batch in enumerate(data_train):
         if arg.save_mem:
-            data_batch = data_batch[0].to(arg.device)
+            data_batch = data_batch[0].to(arg.device).to(torch.float64)
         else:
-            data_batch = data_batch[0]
+            data_batch = data_batch[0].to(torch.float64)
         #input_vector, target_vector = torch.split(data_batch, [data_batch.size()[1]-1, 1], dim=1)
         input_vector, target_vector = data_batch[:, :-1], data_batch[:, -1]
         output_vector = model(input_vector)
         criterion = torch.nn.BCEWithLogitsLoss()
         loss = criterion(output_vector, target_vector.unsqueeze(1))
 
+        print('input device', input_vector.device, input_vector.dtype)
+        print('target device', target_vector.device, target_vector.dtype)
+        print('output device', output_vector.device, target_vector.dtype)
+        print('loss device',   loss.device, target_vector.dtype)
         optim.zero_grad()
         loss.backward()
         optim.step()
 
-        if i % (len(data_train)//2) == 0:
+        if ((len(data_train)//2)) > 0:
+          if i % (len(data_train)//2) == 0:
             print('Epoch {:3d} / {}, step {:4d} / {}; loss {:.4f}'.format(
                 epoch+1, arg.cls_n_epochs, i, len(data_train), loss.item()))
         # PREDICTIONS
-        pred = torch.round(torch.sigmoid(output_vector.detach()))
+        pred = torch.nan_to_num(torch.round(torch.sigmoid(output_vector.detach())), nan = 1)
         target = torch.round(target_vector.detach())
         if i == 0:
             res_true = target
@@ -288,7 +298,7 @@ def evaluate_cls(model, data_test, arg, final_eval=False, calibration_data=None)
     model.eval()
     for j, data_batch in enumerate(data_test):
         if arg.save_mem:
-            data_batch = data_batch[0].to(arg.device)
+            data_batch = data_batch[0].to(arg.device).to(torch.float64)
         else:
             data_batch = data_batch[0]
         input_vector, target_vector = data_batch[:, :-1], data_batch[:, -1]
@@ -584,6 +594,7 @@ if __name__ == '__main__':
                       'dropout_probability':args.cls_dropout_probability}
         classifier = DNN(**DNN_kwargs)
         classifier.to(args.device)
+        classifier.to(torch.float64)
         print(classifier)
         total_parameters = sum(p.numel() for p in classifier.parameters() if p.requires_grad)
 
@@ -596,9 +607,9 @@ if __name__ == '__main__':
             test_data = TensorDataset(torch.tensor(test_data))
             val_data = TensorDataset(torch.tensor(val_data))
         else:
-            train_data = TensorDataset(torch.tensor(train_data).to(args.device))
-            test_data = TensorDataset(torch.tensor(test_data).to(args.device))
-            val_data = TensorDataset(torch.tensor(val_data).to(args.device))
+            train_data = TensorDataset(torch.tensor(train_data).to(args.device).to(torch.float64))
+            test_data = TensorDataset(torch.tensor(test_data).to(args.device).to(torch.float64))
+            val_data = TensorDataset(torch.tensor(val_data).to(args.device).to(torch.float64))
 
         train_dataloader = DataLoader(train_data, batch_size=args.cls_batch_size, shuffle=True)
         test_dataloader = DataLoader(test_data, batch_size=args.cls_batch_size, shuffle=False)

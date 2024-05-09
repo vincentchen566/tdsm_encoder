@@ -129,6 +129,8 @@ class HighLevelFeatures:
         ax.grid(False)
         if vmax is None:
             vmax = data.max()
+            vmax = max(1e-1, vmax)
+            vmin = min(1e-2, data.min())
         pcm = ax.pcolormesh(theta, rad, data_repeated.T+1e-16, norm=LN(vmin=1e-2, vmax=vmax))
         ax.axes.get_xaxis().set_visible(False)
         ax.axes.get_yaxis().set_visible(False)
@@ -177,6 +179,9 @@ class HighLevelFeatures:
             if radii[-1] > max_r:
                 max_r = radii[-1]
         vmax = data.max()
+        vmax = max(1e-1, vmax)
+        vmax = min(vmax, 1e5)
+        vmin = 1e-2
         for idx, layer in enumerate(self.relevantLayers):
             radii = np.array(self.r_edges[idx])
             if self.particle != 'electron':
@@ -191,7 +196,7 @@ class HighLevelFeatures:
             else:
                 ax = plt.subplot(1, len(self.r_edges), idx+1, polar=True)
             ax.grid(False)
-            pcm = ax.pcolormesh(theta, rad, data_repeated.T+1e-16, norm=LN(vmin=1e-2, vmax=vmax))
+            pcm = ax.pcolormesh(theta, rad, data_repeated.T+1e-16, norm=LN(vmin=vmin, vmax=vmax))
             ax.axes.get_xaxis().set_visible(False)
             ax.axes.get_yaxis().set_visible(False)
             if self.particle == 'electron':
@@ -210,6 +215,7 @@ class HighLevelFeatures:
                                height="15%", loc='lower center', bbox_to_anchor=(0., -0.2, 1, 1),
                                bbox_transform=fig.get_axes()[len(self.r_edges)//2].transAxes,
                                borderpad=0)
+        print(vmax, vmin)
         cbar = plt.colorbar(pcm, cax=axins, fraction=0.2, orientation="horizontal")
         cbar.set_label(r'Energy (MeV)', y=0.83, fontsize=12)
         if title is not None:

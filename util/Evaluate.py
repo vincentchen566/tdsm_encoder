@@ -20,10 +20,12 @@ from util.pretty_confusion_matrix import pp_matrix
 def digitize(tensor, bin_edges, device, middle='true', dtype=torch.float32):
     bin_edges = torch.tensor(bin_edges, device=torch.device(device))
     bin_indices = torch.bucketize(tensor, bin_edges) - 1
+    Mask = (bin_indices >= len(bin_edges) - 1) | (bin_indices == 1)
     bin_indices[bin_indices >= (len(bin_edges)-1)] = len(bin_edges)-2
     bin_indices[bin_indices == -1] = 0
+
     middle_values = (bin_edges[bin_indices] + bin_edges[bin_indices + 1])/2
-    return middle_values, bin_indices
+    return middle_values, bin_indices, Mask
 
 def digitize_input(sample_list, particle, filename, dtype=torch.float32,pad_value=-20, device='cpu'):
     xml = XMLHandler(particle, filename=filename)
@@ -41,9 +43,9 @@ def digitize_input(sample_list, particle, filename, dtype=torch.float32,pad_valu
                                                                          , torch.tensor(0, device=torch.device(device))) - 2*torch.pi*torch.where(torch.logical_and(event[:,1]<0, event[:,2]<0),
                                                                                                                                                   torch.tensor(1, device=torch.device(device)),
                                                                                                                                                   torch.tensor(0, device=torch.device(device)))
-        middle_r,     r_bin_indices     = digitize(r,r_edge,device)
-        middle_theta, theta_bin_indices = digitize(theta, theta_edge,device)
-        middle_z,     z_bin_indices     = digitize(event[:,3],z_edge,device)
+        middle_r,     r_bin_indices, r_Mask         = digitize(r,r_edge,device)
+        middle_theta, theta_bin_indices, theta_Mask = digitize(theta, theta_edge,device)
+        middle_z,     z_bin_indices, z_Mask         = digitize(event[:,3],z_edge,device)
         bin_indices   = r_bin_indices + theta_bin_indices * n_r_bin + z_bin_indices * n_theta_bin * n_r_bin 
 
         x = middle_r*torch.cos(middle_theta)
@@ -63,7 +65,10 @@ def digitize_input(sample_list, particle, filename, dtype=torch.float32,pad_valu
 
         bin_indices = bin_indices.cpu().numpy().copy()
         E_          = output_[:,0].cpu().numpy().copy()
-        mask        = (~(E_ == pad_value)) & (E_ > 0.)
+        r_Mask      = r_Mask.cpu().numpy().copy()
+        theta_Mask  = theta_Mask.cpu().numpy().copy()
+        z_Mask      = z_Mask.cpu().numpy().copy()
+        mask        = (~(E_ == pad_value)) & (E_ > 0.015) & (~r_Mask) & (~theta_Mask) & (~z_Mask) #TODO: Check E unit, want to cut on 15keV
         event_np = np.zeros((1,n_r_bin * n_theta_bin * z_bin))
         event_np[0][bin_indices[mask]] = E_[mask]
         trans_event_np.append(event_np)
