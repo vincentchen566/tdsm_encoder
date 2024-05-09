@@ -268,10 +268,6 @@ def train_cls(model, data_train, optim, epoch, arg):
         criterion = torch.nn.BCEWithLogitsLoss()
         loss = criterion(output_vector, target_vector.unsqueeze(1))
 
-        print('input device', input_vector.device, input_vector.dtype)
-        print('target device', target_vector.device, target_vector.dtype)
-        print('output device', output_vector.device, target_vector.dtype)
-        print('loss device',   loss.device, target_vector.dtype)
         optim.zero_grad()
         loss.backward()
         optim.step()
