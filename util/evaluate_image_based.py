@@ -52,7 +52,7 @@ import HighLevelFeatures as HLF
 
 from evaluate_plotting_helper import *
 
-#torch.set_default_dtype(torch.float64)
+#torch.set_default_dtype(torch.float64) # Please see issue in https://discuss.pytorch.org/t/tensors-of-the-same-index-must-be-on-the-same-device-and-the-same-dtype-except-step-tensors-that-can-be-cpu-and-float32-notwithstanding/190335/4
 
 plt.rc('text', usetex=True)
 plt.rc('text.latex', preamble=r'\usepackage{amsmath,amssymb}')
