@@ -68,7 +68,7 @@ def digitize_input(sample_list, particle, filename, dtype=torch.float32,pad_valu
         r_Mask      = r_Mask.cpu().numpy().copy()
         theta_Mask  = theta_Mask.cpu().numpy().copy()
         z_Mask      = z_Mask.cpu().numpy().copy()
-        mask        = (~(E_ == pad_value)) & (E_ > 0.015) & (~r_Mask) & (~theta_Mask) & (~z_Mask) #TODO: Check E unit, want to cut on 15keV
+        mask        = (~(E_ == pad_value)) & (E_ > 1.5e-5) & (~r_Mask) & (~theta_Mask) & (~z_Mask) # Energy cut on 15keV
         event_np = np.zeros((1,n_r_bin * n_theta_bin * z_bin))
         event_np[0][bin_indices[mask]] = E_[mask]
         trans_event_np.append(event_np)

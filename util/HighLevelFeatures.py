@@ -129,6 +129,8 @@ class HighLevelFeatures:
         ax.grid(False)
         if vmax is None:
             vmax = data.max()
+            if (vmax < 1e-1) or (data.min() > 1e-2):
+              print("[Warning] max(data) too small or min(data) too big, data range [{min_}, {max_}]".format(min_ = data.min(), max_ = data.max())) 
             vmax = max(1e-1, vmax)
             vmin = min(1e-2, data.min())
         pcm = ax.pcolormesh(theta, rad, data_repeated.T+1e-16, norm=LN(vmin=1e-2, vmax=vmax))
