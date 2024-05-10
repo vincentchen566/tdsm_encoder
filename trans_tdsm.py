@@ -426,7 +426,7 @@ def main(config=None):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
-    with wandb.init(config=config):
+    with wandb.init(config=config, project='testsweep', entity='calo_tNCSM'):
         # access all HPs through wandb.config, so logging matches execution!
         config = wandb.config
 
