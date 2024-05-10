@@ -671,10 +671,10 @@ def main(config=None):
             Converter_.to_h5py(os.path.join(output_directory, 'Reference.h5'))
 
    
-            os.system('python util/evaluate_image_based.py -m avg --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score')))
+            os.system('python util/evaluate_image_based.py -m all --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score')))
             wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'reference_average_shower_dataset_2.png'))})
             wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'average_shower_dataset_2.png'))})
-
+            wandb.log({"summary":      wandb.Image(os.path.join(output_directory, 'calo_score', 'Etot_Einc_dataset_2.png'))})
 
 if __name__=='__main__':
 
