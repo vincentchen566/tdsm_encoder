@@ -52,7 +52,7 @@ def train_model(files_list_, device='cpu'):
     config = wandb.config
     print(f'training config: {config}')
 
-    wd = os.getcwd()
+    wd = wandb.config.work_dir
     #wd = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/'
     output_files = 'training_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
     output_directory = os.path.join(wd, output_files)
@@ -164,7 +164,7 @@ def train_model(files_list_, device='cpu'):
 
 def generate(files_list_, load_filename, device='cpu'):
 
-    wd = os.getcwd()
+    wd = wandb.config.work_dir
     output_file = 'sampling_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
     output_directory = os.path.join(wd, output_file)
     print('Sampling directory: ', output_directory)
@@ -399,7 +399,7 @@ def main(config=None):
         print('Current device: ', torch.cuda.current_device())
         print('Cuda arch list: ', torch.cuda.get_arch_list())
     
-    print('Working directory: ' , os. getcwd())
+    print('Working directory: ' , config.work_dir)
 
     # Useful when debugging gradient issues
     torch.autograd.set_detect_anomaly(True)
@@ -415,7 +415,7 @@ def main(config=None):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
-    with wandb.init(config=config):
+    with wandb.init(config=config, dir=config.work_dir):
         # access all HPs through wandb.config, so logging matches execution!
         config = wandb.config
 
@@ -525,7 +525,7 @@ def main(config=None):
         if switches_>>3 & trigger:
             # Distributions object for generated files
             print(f'Generated inputs')
-            workingdir = os.getcwd()
+            workingdir = wandb.config.work_dir
             if not switches_>>2 & trigger:
               output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230829_1606_output')
             print(f'Evaluation outputs stored here: {output_directory}')
@@ -673,24 +673,34 @@ if __name__=='__main__':
     argparser.add_argument('-i','--inputs',dest='inputs', help='Path to input directory', default='', type=str)
     argparser.add_argument('-c', '--config', dest='config', help='Configuration file for parameter monitoring', default='', type=str)
     argparser.add_argument('-p', '--preprocessor', dest='preprocessor', help='pickle files of preprocessor', default='', type=str)
+    parsed, unknown = argparser.parse_known_args()
+    for arg in unknown:
+        if arg.startswith(("-", "--")):
+        # you can pass any arguments to add_argument
+            argparser.add_argument(arg.split('=')[0])
+
     args = argparser.parse_args()
-    
+
+    print(args)
+    main(args)
+
+
     # WandB configuration
-    cfg_name = args.config
+    # cfg_name = args.config
 
-    project_name = cfg_name.split('.')[0].split('_',1)[1]
-    print(f'Starting project: {project_name}')
+    #project_name = cfg_name.split('.')[0].split('_',1)[1]
+    #print(f'Starting project: {project_name}')
 
-    if not os.path.exists(cfg_name):
-        cfg_name = os.path.join('../configs', cfg_name)
+    #if not os.path.exists(cfg_name):
+    #    cfg_name = os.path.join('../configs', cfg_name)
 
-    with open(cfg_name) as ymlfile:
-        sweep_yml = yaml.safe_load(ymlfile)
+    #with open(cfg_name) as ymlfile:
+    #    sweep_yml = yaml.safe_load(ymlfile)
     
     # Run main function using sweep agents reading from configs
     # Sweeps run by setting range of parameter values to explore, else set single parameter value
     # Running from yaml files facilitates submitting (several) jobs to condor
-    n_runs = 1
-    sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
-    wandb.agent(sweep_id, main, count=n_runs)
+    #n_runs = 1
+    #sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
+    #wandb.agent(sweep_id, main, count=n_runs)
 
