@@ -673,6 +673,7 @@ if __name__=='__main__':
     argparser.add_argument('-i','--inputs',dest='inputs', help='Path to input directory', default='', type=str)
     argparser.add_argument('-c', '--config', dest='config', help='Configuration file for parameter monitoring', default='', type=str)
     argparser.add_argument('-p', '--preprocessor', dest='preprocessor', help='pickle files of preprocessor', default='', type=str)
+    argparser.add_argument('--condor', dest = 'condor', default = 0, type=int)
     parsed, unknown = argparser.parse_known_args()
     for arg in unknown:
         if arg.startswith(("-", "--")):
@@ -682,25 +683,26 @@ if __name__=='__main__':
     args = argparser.parse_args()
 
     print(args)
-    main(args)
-
+    if args.condor == 1:
+      main(args)
+    else:
 
     # WandB configuration
-    # cfg_name = args.config
+      cfg_name = args.config
 
-    #project_name = cfg_name.split('.')[0].split('_',1)[1]
-    #print(f'Starting project: {project_name}')
+      project_name = cfg_name.split('.')[0].split('_',1)[1]
+      print(f'Starting project: {project_name}')
 
-    #if not os.path.exists(cfg_name):
-    #    cfg_name = os.path.join('../configs', cfg_name)
+      if not os.path.exists(cfg_name):
+        cfg_name = os.path.join('../configs', cfg_name)
 
-    #with open(cfg_name) as ymlfile:
-    #    sweep_yml = yaml.safe_load(ymlfile)
+      with open(cfg_name) as ymlfile:
+        sweep_yml = yaml.safe_load(ymlfile)
     
     # Run main function using sweep agents reading from configs
     # Sweeps run by setting range of parameter values to explore, else set single parameter value
     # Running from yaml files facilitates submitting (several) jobs to condor
-    #n_runs = 1
-    #sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
-    #wandb.agent(sweep_id, main, count=n_runs)
+      n_runs = 1
+      sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
+      wandb.agent(sweep_id, main, count=n_runs)
 

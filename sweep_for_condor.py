@@ -35,6 +35,7 @@ if __name__ == '__main__':
   sweep_yml['program'] = os.path.join(CWD, args.python_cfg)
   sweep_yml['parameters']['work_dir'] = {'value': CWD}
   sweep_yml['parameters']['switches'] = {'value': '1111'}
+  sweep_yml['parameters']['condor']   = {'value': 1}
   sweep_yml['parameters']['inputs']= {'value': os.path.join(CWD, "Data_For_Test")}
   sweep_yml['parameters']['preprocessor'] = {'value': os.path.join(CWD, "Data_For_Test/dataset_2_padded_nentry1033To1161_preprocessor.pkl")}
 
