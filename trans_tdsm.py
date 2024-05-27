@@ -683,9 +683,11 @@ if __name__=='__main__':
     args = argparser.parse_args()
 
     print(args)
-    if args.condor == 1:
+    if args.condor == 1: # Use condor to run
       main(args)
-    else:
+
+
+    else: # Local run
 
     # WandB configuration
       cfg_name = args.config
