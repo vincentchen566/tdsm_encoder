@@ -431,7 +431,7 @@ if __name__ == '__main__':
                        '2': 0.5e-3/0.033, '3': 0.5e-3/0.033}[args.dataset]
 
     hlf = HLF.HighLevelFeatures(particle,
-                                filename='binning_dataset_{}.xml'.format(
+                                filename='dataset_generation_code/binning_dataset_{}.xml'.format(
                                     args.dataset.replace('-', '_')))
     shower, energy = extract_shower_and_energy(source_file, which='input')
 
@@ -452,7 +452,7 @@ if __name__ == '__main__':
     else:
         print("Computing .pkl reference")
         reference_hlf = HLF.HighLevelFeatures(particle,
-                                              filename='binning_dataset_{}.xml'.format(
+                                              filename='dataset_generation_code/binning_dataset_{}.xml'.format(
                                                   args.dataset.replace('-', '_')))
         reference_hlf.Einc = reference_energy
         save_reference(reference_hlf,

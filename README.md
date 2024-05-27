@@ -2,11 +2,22 @@
 <!-- ![img](Banner_grey.jpg) -->
 # Setup and Quick Start
 
-## lxplus setup
-To ensure the necessary external software packages are available, use one of the software stacks available on the CERN Virtual Machine File System (CVMFS). This distributed disk system should provide all the necessary dependancies you will requires. If you want to use GPUs, ensure the stack you source has CUDA capabilities e.g.
+# lxplus Setup
+Log on to a machine from CERNs lxplus9 GPU cluster:
 ```
-source /cvmfs/sft.cern.ch/lcg/views/LCG_102b_cuda/x86_64-centos7-gcc8-opt/setup.sh
+ssh -XY <username>@lxplus-gpu.cern.ch
 ```
+Our code has dependencies on several external python packages. To ensure the necessary external software packages are available, use one of the software stacks available on the CERN Virtual Machine File System (CVMFS). This distributed disk system should provide all the necessary dependancies you will requires. If you want to use GPUs, ensure the stack you source has CUDA capabilities e.g.
+```
+source /cvmfs/sft.cern.ch/lcg/views/LCG_105a_cuda/x86_64-el9-gcc11-opt/setup.sh
+```
+We have setup the capability to run on the CERN batch service while reporting using WandB. This allows the user to run several experiments with different settings in parallel on the GPU farm (individual config per job) or run hyperparameter sweeps (using a sweep config). Parrallel running is obviously faster but doesn't output the detailed hyperparameter information like ranking. In order to run on the lxplus machines, you need to: 
+
+1) ```pip install --user wandb```  on the file system from which you submit your jobs
+2) Ensure this installed wandb into the local python installation you want to use e.g. ~/.local/lib/python3.9/site-packages/
+3) Ensure this patch is added to your PYTHONPATH
+
+The first time you run this, you should do it interactively as wandb will ask you to either log in to your account or verify permissions
 
 # Datasets
 Taking datasets from calochallenge atm. See calochallenge page for where to download datasets. Within the datasets directory one can find the pad_events_threshold.py script. Using this, one can pad showers to have the same size, allowing the batch computations implemented in our framework, and pre-process them however you want. The output is save in a .pt format in the same directory.

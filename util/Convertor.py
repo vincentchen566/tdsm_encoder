@@ -3,9 +3,10 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from util.XMLHandler import XMLHandler
+
+import XMLHandler
 import pandas as pd
-import util.Evaluate
+import Evaluate
 import pickle
 import h5py
 
@@ -107,7 +108,7 @@ class Convertor:
 
         dataset = torch.load(dataset_name, map_location = torch.device(device))
         label_tensor = torch.ones(len(dataset[0]), device=device) * label
-        self.dataset = util.Evaluate.evaluate_dataset(dataset[0], dataset[1], label_tensor, device)
+        self.dataset = Evaluate.evaluate_dataset(dataset[0], dataset[1], label_tensor, device)
         self.device  = device
         self.padding_value = padding_value
         dbfile = open(preprocessor, 'rb')
