@@ -71,15 +71,16 @@ class Preprocessor:
       return z_
 
     def transform_hit_e(self, e_, incident_energy):
-      new_e = e_ / incident_energy
-      new_e = (np.log10(new_e) + 5.0)/3.0
+      new_e = e_ / (incident_energy * 2.) 
+      new_e = 1e-6 + (1.- 2e-6)*new_e
+      new_e = (np.log(new_e/(1-new_e)))
       new_e = np.nan_to_num(new_e)
       new_e = np.reshape(new_e, (-1,))
       return new_e
 
     def inverse_transform_hit_e(self, e_, mask, new_padding_value, incident_energy):
 
-      new_e = (10**(3.0 * e_ - 5.0)) * incident_energy
+      new_e = (((np.exp(e_))/(1.+(np.exp(e_)))) - 1e-6) * 2. * incident_energy / (1.-2e-6)
 
       new_e[mask] = (np.ones((len(new_e), 1))*new_padding_value)[mask]
       new_e = np.reshape(new_e, (-1,))
