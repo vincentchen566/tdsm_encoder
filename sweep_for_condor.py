@@ -23,15 +23,16 @@ if __name__ == '__main__':
   usage = 'usage: %prog[options]'
   parser = argparse.ArgumentParser(description=usage)
   parser.add_argument('--config_file', type=str, help = 'configuration file for wandb')
-  parser.add_argument('--python_cfg', type=str, default = 'trans_tdsm_phase2.py', help = 'python file to run the code')
+  parser.add_argument('--python_cfg', type=str, default = 'trans_tdsm.py', help = 'python file to run the code')
   parser.add_argument('--n_run', type=int, default = 5, help = 'number of runs')
   parser.add_argument('--dryRun', action='store_true', help = 'not submit to condor')
-  parser.add_argument('--afs_dir', type=str, default = '/afs/cern.ch/user/t/tihsu/ML_hackathon_transferlearning', help='workspace in afs space')
+  parser.add_argument('--afs_dir', type=str, default = '/afs/cern.ch/user/v/vchen/tdsm_encoder', help='workspace in afs space')
   parser.add_argument('--JobFlavour', type=str, default = 'tomorrow', help='JobFlavour for condor')
   args = parser.parse_args()
 
   # Read configuration file for sweep.
-  with open(args.config_file, 'r') as file:
+  print(os.path.join(CWD, args.config_file))
+  with open(os.path.join(CWD, args.config_file), 'r') as file:
     sweep_yml = yaml.safe_load(file)
 
   # Define extra information on top of configuration file for running purpose i.e. python_cfg argument.

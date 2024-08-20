@@ -33,3 +33,4 @@ parameters:
     value: 100
   n_showers_2_gen: 
     value: 100
+work_dir: "./output"

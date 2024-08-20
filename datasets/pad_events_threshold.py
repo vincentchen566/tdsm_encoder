@@ -39,12 +39,12 @@ def main():
     min_e = 10
     max_e_subset = 0
     max_e = 0
-    
+
     # For each file
     for infile in os.listdir(indir):
-        if fnmatch.fnmatch(infile, 'dataset_2_tensor_no_padding_euclidian_nentry*.pt'):
+        if fnmatch.fnmatch(infile, 'dataset_1_photons_tensor_no_pedding_euclidian_nentry*.pt'):
             filename = os.path.join(indir,infile)
-            ofile = infile.replace("tensor_no_padding_euclidian", "padded" )
+            ofile = infile.replace("tensor_no_pedding_euclidian", "padded" )
             opath = './'
             odir = os.path.join(opath,odir)
             if not os.path.exists(odir):
@@ -71,7 +71,7 @@ def main():
 
 #                if shower.shape[0] > max_nhits:
  #                   max_nhits = shower.shape[0]
-              E_ = np.asarray(shower[:,0]*GeV).reshape(-1,1)
+              E_ = np.asarray(shower[:,0].cpu()*GeV).reshape(-1,1)
               mask_e = E_ > args.threshold
               E_ = E_[mask_e].reshape(-1,1)
               if len(E_) > max_nhits:
@@ -83,8 +83,7 @@ def main():
             incident_energies = np.asarray( incident_energies ).reshape(-1, 1)
             #preprocessor.fit_incident_energy( incident_energies)
             incident_energies_org = incident_energies / GeV
-            incident_energies = preprocessor.transform_incident_energy(incident_energies)
-            incident_energies = torch.from_numpy( incident_energies.flatten() )
+            
             print(f'incident_energies:{incident_energies}')
             
             # Rescale hit energy and position and do padding
@@ -96,7 +95,7 @@ def main():
             for shower in custom_data.data:
               if shower.shape[0] == 0:
                 continue
-              Z_ = np.asarray(shower[:,3]).reshape(-1,1)
+              Z_ = np.asarray(shower[:,3].cpu()).reshape(-1,1)
               #preprocessor.fit(Z_)
 
 
@@ -106,10 +105,10 @@ def main():
                     continue
                 
                 # Transform the inputs
-                E_ = np.asarray(showers[:,0]*GeV).reshape(-1, 1)
-                X_ = np.asarray(showers[:,1]).reshape(-1, 1)
-                Y_ = np.asarray(showers[:,2]).reshape(-1, 1)
-                Z_ = np.asarray(showers[:,3]).reshape(-1, 1)
+                E_ = np.asarray(showers[:,0].cpu()*GeV).reshape(-1, 1)
+                X_ = np.asarray(showers[:,1].cpu()).reshape(-1, 1)
+                Y_ = np.asarray(showers[:,2].cpu()).reshape(-1, 1)
+                Z_ = np.asarray(showers[:,3].cpu()).reshape(-1, 1)
                 
                 mask_e =  E_ > args.threshold
 
@@ -128,7 +127,7 @@ def main():
                   W_ = E_flat_ * 0.0
                 else:
                   W_ = E_flat_ / total_E_
-                
+
                 if transform == 1:
                     E_, X_, Y_, Z_ = preprocessor.transform(E_, X_, Y_, Z_, incident_energies[ievent])
                     
@@ -148,6 +147,9 @@ def main():
                 #padded_weights.append(padded_weight)
                 nhits.append(nhit)
                 shower_count+=1
+            
+            incident_energies = preprocessor.transform_incident_energy(incident_energies)
+            incident_energies = torch.from_numpy( incident_energies.flatten() )
             
             nhits = torch.from_numpy(np.array(nhits))
             torch.save([padded_showers,incident_energies, nhits], outfilename)

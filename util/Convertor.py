@@ -12,10 +12,10 @@ import h5py
 
 class Preprocessor:
     def __init__(self):
-        self.maxe_ = 1000.
-        self.mine_ = 1.
-        self.maxz_ = 0.0
-        self.minz_ = 44.0
+        self.maxe_ = 5000.
+        self.mine_ = 0.2
+        self.maxz_ = 12.0
+        self.minz_ = 0.0
 
     ########################
     ##  Incident  Energy  ##
@@ -72,9 +72,11 @@ class Preprocessor:
       return z_
 
     def transform_hit_e(self, e_, incident_energy):
+      #with np.errstate(invalid="raise"):
       new_e = e_ / (incident_energy * 2.) 
       new_e = 1e-6 + (1.- 2e-6)*new_e
       new_e = (np.log(new_e/(1-new_e)))
+      
       new_e = np.nan_to_num(new_e)
       new_e = np.reshape(new_e, (-1,))
       return new_e

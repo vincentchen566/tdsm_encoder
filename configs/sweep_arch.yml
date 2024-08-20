@@ -14,7 +14,7 @@ parameters:
   n_feat_dim: 
     value: 4
   embed_dim:
-    values: [500,250,100,50]
+    values: [250,100,50]
   hidden_dim: 
     values: [512,256,128,64]
   num_encoder_blocks: 
@@ -33,3 +33,5 @@ parameters:
     value: 100
   n_showers_2_gen: 
     value: 100
+
+work_dir: "/afs/cern.ch/user/v/vchen/tdsm_encoder"

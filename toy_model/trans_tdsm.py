@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.optim import Adam
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-from CloudFeatures import CloudFeatures
+#from CloudFeatures import CloudFeatures
 
 class GaussianFourierProjection(nn.Module):
   """Gaussian random features for encoding time steps"""

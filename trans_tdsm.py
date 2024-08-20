@@ -1,3 +1,6 @@
+#LINE 99 CHANGE ABOUT CREATING MODEL IN TRAIN MODEL
+
+
 import time, functools, torch, os, sys, random, fnmatch, psutil, argparse, tqdm, yaml
 from datetime import datetime
 import numpy as np
@@ -29,6 +32,26 @@ import Convertor as Convertor
 from Convertor import Preprocessor
 
 
+class Config:
+    def __init__(self, yml_input):
+        self.method = yml_input['method']
+        self.train_ratio = yml_input['parameters']['train_ratio']['value']
+        self.batch_size = yml_input['parameters']['batch_size']['value']
+        self.lr = yml_input['parameters']['lr']['value']
+        self.epochs = yml_input['parameters']['epochs']['value']
+        self.n_feat_dim = yml_input['parameters']['n_feat_dim']['value']
+        self.embed_dim = yml_input['parameters']['embed_dim']['values']
+        self.hidden_dim = yml_input['parameters']['hidden_dim']['values']
+        self.num_encoder_blocks = yml_input['parameters']['num_encoder_blocks']['value']
+        self.num_attn_heads = yml_input['parameters']['num_attn_heads']['value']
+        self.dropout_gen = yml_input['parameters']['dropout_gen']['value']
+        self.SDE = yml_input['parameters']['SDE']['value']
+        self.sigma_max = yml_input['parameters']['sigma_max']['value']
+        self.sigma_min = yml_input['parameters']['sigma_min']['value']
+        self.sampler_steps = yml_input['parameters']['sampler_steps']['value']
+        self.n_showers_2_gen = yml_input['parameters']['n_showers_2_gen']['value']
+        self.work_dir = yml_input['work_dir']
+
 def train_log(loss, batch_ct, epoch):
     wandb.log({"epoch": epoch, "loss": loss}, step=batch_ct)
 
@@ -57,6 +80,7 @@ def train_model(files_list_, device='cpu'):
 
     wd = wandb.config.work_dir
     #wd = '/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/'
+    #wd = "C:/Users/vince/tdsm_encoder/"
     output_files = 'training_'+datetime.now().strftime('%Y%m%d_%H%M')+'_output/'
     output_directory = os.path.join(wd, output_files)
     print('Training directory: ', output_directory)
@@ -75,7 +99,8 @@ def train_model(files_list_, device='cpu'):
 
     # Instantiate model
     loss_fn = score_model.ScoreMatchingLoss()
-    model = score_model.Gen(config.n_feat_dim, config.embed_dim, config.hidden_dim, config.num_encoder_blocks, config.num_attn_heads, config.dropout_gen, marginal_prob_std=marginal_prob_std_fn)
+    model = score_model.Gen(config.n_feat_dim, config.embed_dim[0], config.hidden_dim[0], config.num_encoder_blocks, config.num_attn_heads, config.dropout_gen, marginal_prob_std=marginal_prob_std_fn)
+
 
     table = PrettyTable(['Module name', 'Parameters listed'])
     t_params = 0
@@ -240,6 +265,8 @@ def generate(files_list_, load_filename, device='cpu'):
         shower_counter = 0
 
         # Load shower data
+        print(file_idx)
+        print(file)
         custom_data = utils.cloud_dataset(file, device=device)
         point_clouds_loader = DataLoader(custom_data, batch_size=config.batch_size, shuffle=True)
         # Loop over batches
@@ -384,8 +411,10 @@ def generate(files_list_, load_filename, device='cpu'):
     # Add evaluation plots to keep on wandb
     wandb.log({"summary" : wandb.Image(comparison_fig)})
     return output_directory
+
 def main(config=None):
-   
+    
+
     indir = args.inputs
     switches_ = int('0b'+args.switches,2)
     switches_str = bin(int('0b'+args.switches,2))
@@ -410,7 +439,8 @@ def main(config=None):
         print('Current device: ', torch.cuda.current_device())
         print('Cuda arch list: ', torch.cuda.get_arch_list())
     
-    print('Working directory: ' , config.work_dir)
+    
+    #print('Working directory: ' , config.work_dir)
 
     # Useful when debugging gradient issues
     torch.autograd.set_detect_anomaly(True)
@@ -422,7 +452,7 @@ def main(config=None):
     files_list_ = []
     print(f'Training files found in: {training_file_path}')
     for filename in os.listdir(training_file_path):
-        if fnmatch.fnmatch(filename, 'dataset_2_padded_nentry1033To1161.pt'):
+        if fnmatch.fnmatch(filename, 'dataset_1_photons_padded_nentry*.pt'):
             files_list_.append(os.path.join(training_file_path,filename))
     print(f'Files: {files_list_}')
 
@@ -676,6 +706,306 @@ def main(config=None):
             wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'average_shower_dataset_2.png'))})
             wandb.log({"summary":      wandb.Image(os.path.join(output_directory, 'calo_score', 'voxel_energy_dataset_2.png'))})
 
+
+
+
+def main_local(config=None):
+    indir = args.inputs
+    switches_ = int('0b'+args.switches,2)
+    switches_str = bin(int('0b'+args.switches,2))
+
+    trigger = 0b0001
+    print(f'switches trigger: {switches_str}')
+    if switches_ & trigger:
+        print('input_feature_plots = ON')
+    if switches_>>1 & trigger:
+        print('training_switch = ON')
+    if switches_>>2 & trigger:
+        print('sampling_switch = ON')
+    if switches_>>3 & trigger:
+        print('evaluation_plots_switch = ON')
+
+    print('torch version: ', torch.__version__)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    print('Running on device: ', device)
+    if torch.cuda.is_available():
+        print('Cuda used to build pyTorch: ',torch.version.cuda)
+        print('Current device: ', torch.cuda.current_device())
+        print('Cuda arch list: ', torch.cuda.get_arch_list())
+    
+    
+    #print('Working directory: ' , config.work_dir)
+
+    # Useful when debugging gradient issues
+    torch.autograd.set_detect_anomaly(True)
+
+    padding_value = 0.0
+
+    # List of training input files
+    training_file_path = os.path.join(indir) # change indir to be absolute path
+    files_list_ = []
+    print(f'Training files found in: {training_file_path}')
+    for filename in os.listdir(training_file_path):
+        if fnmatch.fnmatch(filename, 'dataset_1_photons_padded_nentry*.pt'): #NEED TO CHANGE TO YOUR TRAINING FILES
+            files_list_.append(os.path.join(training_file_path,filename))
+    print(f'Files: {files_list_}')
+
+    with wandb.init(config = config, dir=config['work_dir']):
+        # access all HPs through wandb.config, so logging matches execution!
+        config = wandb.config
+
+        #### Input plots ####
+        if switches_ & trigger:
+            # Limited to n_showers_2_gen showers in for plots
+            # Transformed variables
+
+            print(files_list_)
+            print(config['parameters']['n_showers_2_gen']['value'])
+
+            dists_trans = display.plot_distribution(files_list_, nshowers_2_plot=config['parameters']['n_showers_2_gen']['value'], padding_value=padding_value)
+            entries = dists_trans[0]
+            all_incident_e_trans = dists_trans[1]
+            total_deposited_e_shower_trans = dists_trans[2]
+            all_e_trans = dists_trans[3]
+            all_x_trans = dists_trans[4]
+            all_y_trans = dists_trans[5]
+            all_z_trans = dists_trans[6]
+            all_hit_ine_trans = dists_trans[7]
+            average_x_shower_trans = dists_trans[8]
+            average_y_shower_trans = dists_trans[9]
+
+            ### 1D histograms
+            fig, ax = plt.subplots(3,3, figsize=(12,12))
+            print('Plot # entries')
+            ax[0][0].set_ylabel('# entries')
+            ax[0][0].set_xlabel('Hit entries')
+            ax[0][0].hist(entries, 50, color='orange', label='Geant4')
+            ax[0][0].legend(loc='upper right')
+
+            print('Plot hit energies')
+            ax[0][1].set_ylabel('# entries')
+            ax[0][1].set_xlabel('Hit energy [GeV]')
+            ax[0][1].hist(all_e_trans, 50, color='orange', label='Geant4')
+            ax[0][1].set_yscale('log')
+            ax[0][1].legend(loc='upper right')
+
+            print('Plot hit x')
+            ax[0][2].set_ylabel('# entries')
+            ax[0][2].set_xlabel('Hit x position')
+            ax[0][2].hist(all_x_trans, 50, color='orange', label='Geant4')
+            ax[0][2].set_yscale('log')
+            ax[0][2].legend(loc='upper right')
+
+            print('Plot hit y')
+            ax[1][0].set_ylabel('# entries')
+            ax[1][0].set_xlabel('Hit y position')
+            ax[1][0].hist(all_y_trans, 50, color='orange', label='Geant4')
+            ax[1][0].set_yscale('log')
+            ax[1][0].legend(loc='upper right')
+
+            print('Plot hit z')
+            ax[1][1].set_ylabel('# entries')
+            ax[1][1].set_xlabel('Hit z position')
+            ax[1][1].hist(all_z_trans, color='orange', label='Geant4')
+            ax[1][1].set_yscale('log')
+            ax[1][1].legend(loc='upper right')
+
+            print('Plot incident energies')
+            ax[1][2].set_ylabel('# entries')
+            ax[1][2].set_xlabel('Incident energies [GeV]')
+            ax[1][2].hist(all_incident_e_trans, 50, color='orange', label='Geant4')
+            ax[1][2].set_yscale('log')
+            ax[1][2].legend(loc='upper right')
+
+            print('Plot total deposited hit energy per shower')
+            ax[2][0].set_ylabel('# entries')
+            ax[2][0].set_xlabel('Deposited energy [GeV]')
+            ax[2][0].hist(total_deposited_e_shower_trans, 50, color='orange', label='Geant4')
+            ax[2][0].set_yscale('log')
+            ax[2][0].legend(loc='upper right')
+
+            print('Plot av. X position per shower')
+            ax[2][1].set_ylabel('# entries')
+            ax[2][1].set_xlabel('Average X position [GeV]')
+            ax[2][1].hist(average_x_shower_trans, 50, color='orange', label='Geant4')
+            ax[2][1].set_yscale('log')
+            ax[2][1].legend(loc='upper right')
+
+            print('Plot av. Y position per shower')
+            ax[2][2].set_ylabel('# entries')
+            ax[2][2].set_xlabel('Average Y position [GeV]')
+            ax[2][2].hist(average_y_shower_trans, 50, color='orange', label='Geant4')
+            ax[2][2].set_yscale('log')
+            ax[2][2].legend(loc='upper right')
+
+            save_name = os.path.join(training_file_path,'input_dists_transformed.png')
+            fig.savefig(save_name)
+
+
+        #train_model_name = "/afs/cern.ch/work/j/jthomasw/private/NTU/fast_sim/tdsm_encoder/training_20230830_1430_output/ckpt_tmp_499.pth" #Default model name 
+        #### Training ####
+        if switches_>>1 & trigger:
+            trained_model_name = train_model(files_list_, device=device)
+        
+        #### Sampling ####
+        if switches_>>2 & trigger:
+            # If a new training was run and you want to use it
+            if switches_>>1 & trigger:
+                output_directory = generate(files_list_, load_filename=trained_model_name, device=device)
+            # To use an older training file
+            # n.b. you'll need to make sure the config hyperparams are the same as the model being used
+            else:
+#                trained_model_name = 'training_20240408_1350_output/ckpt_tmp_299.pth'
+                trained_model_name = 'training_20240429_1211_output/ckpt_tmp_2.pth'
+                output_directory = generate(files_list_, load_filename=trained_model_name, device=device)
+            
+
+        #### Evaluation plots ####
+        if switches_>>3 & trigger:
+            # Distributions object for generated files
+            print(f'Generated inputs')
+            workingdir = wandb.config.work_dir
+            if not switches_>>2 & trigger:
+              output_directory = os.path.join(workingdir,'sampling_100samplersteps_20230829_1606_output')
+            print(f'Evaluation outputs stored here: {output_directory}')
+            plot_file_name = os.path.join(output_directory, 'sample.pt')
+            custom_data = utils.cloud_dataset(plot_file_name,device=device)
+            # when providing just cloud dataset, energy_trans_file needs to include full path
+            dists_gen = display.plot_distribution(custom_data, nshowers_2_plot=config['parameters']['n_showers_2_gen']['value'], padding_value=padding_value)
+
+            entries_gen = dists_gen[0]
+            all_incident_e_gen = dists_gen[1]
+            total_deposited_e_shower_gen = dists_gen[2]
+            all_e_gen = dists_gen[3]
+            all_x_gen = dists_gen[4]
+            all_y_gen = dists_gen[5]
+            all_z_gen = dists_gen[6]
+            all_hit_ine_gen = dists_gen[7]
+            average_x_shower_gen = dists_gen[8]
+            average_y_shower_gen = dists_gen[9]
+
+            print(f'Geant4 inputs')
+            # Distributions object for Geant4 files
+            dists = display.plot_distribution(files_list_, nshowers_2_plot=config['parameters']['n_showers_2_gen']['value'], padding_value=padding_value)
+
+            entries = dists[0]
+            all_incident_e = dists[1]
+            total_deposited_e_shower = dists[2]
+            all_e = dists[3]
+            all_x = dists[4]
+            all_y = dists[5]
+            all_z = dists[6]
+            all_hit_ine_geant = dists[7]
+            average_x_shower_geant = dists[8]
+            average_y_shower_geant = dists[9]
+
+            print('Plot # entries')
+            bins=np.histogram(np.hstack((entries,entries_gen)), bins=50)[1]
+            fig, ax = plt.subplots(3,3, figsize=(12,12))
+            ax[0][0].set_ylabel('# entries')
+            ax[0][0].set_xlabel('Hit entries')
+            ax[0][0].hist(entries, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[0][0].hist(entries_gen, bins, alpha=0.5, color='blue', label='Gen')
+            ax[0][0].legend(loc='upper right')
+
+            print('Plot hit energies')
+            bins=np.histogram(np.hstack((all_e,all_e_gen)), bins=50)[1]
+            ax[0][1].set_ylabel('# entries')
+            ax[0][1].set_xlabel('Hit energy [GeV]')
+            ax[0][1].hist(all_e, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[0][1].hist(all_e_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[0][1].set_yscale('log')
+            ax[0][1].legend(loc='upper right')
+
+            print('Plot hit x')
+            bins=np.histogram(np.hstack((all_x,all_x_gen)), bins=50)[1]
+            ax[0][2].set_ylabel('# entries')
+            ax[0][2].set_xlabel('Hit x position')
+            ax[0][2].hist(all_x, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[0][2].hist(all_x_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[0][2].set_yscale('log')
+            ax[0][2].legend(loc='upper right')
+
+            print('Plot hit y')
+            bins=np.histogram(np.hstack((all_y,all_y_gen)), bins=50)[1]
+            ax[1][0].set_ylabel('# entries')
+            ax[1][0].set_xlabel('Hit y position')
+            ax[1][0].hist(all_y, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[1][0].hist(all_y_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[1][0].set_yscale('log')
+            ax[1][0].legend(loc='upper right')
+
+            print('Plot hit z')
+            bins=np.histogram(np.hstack((all_z,all_z_gen)), bins=50)[1]
+            ax[1][1].set_ylabel('# entries')
+            ax[1][1].set_xlabel('Hit z position')
+            ax[1][1].hist(all_z, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[1][1].hist(all_z_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[1][1].set_yscale('log')
+            ax[1][1].legend(loc='upper right')
+
+            print('Plot incident energies')
+            bins=np.histogram(np.hstack((all_incident_e,all_incident_e_gen)), bins=50)[1]
+            ax[1][2].set_ylabel('# entries')
+            ax[1][2].set_xlabel('Incident energies [GeV]')
+            ax[1][2].hist(all_incident_e, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[1][2].hist(all_incident_e_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[1][2].set_yscale('log')
+            ax[1][2].legend(loc='upper right')
+
+            print('Plot total deposited hit energy')
+            bins=np.histogram(np.hstack((total_deposited_e_shower,total_deposited_e_shower_gen)), bins=50)[1]
+            ax[2][0].set_ylabel('# entries')
+            ax[2][0].set_xlabel('Deposited energy [GeV]')
+            ax[2][0].hist(total_deposited_e_shower, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[2][0].hist(total_deposited_e_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[2][0].set_yscale('log')
+            ax[2][0].legend(loc='upper right')
+
+            print('Plot average hit X position')
+            bins=np.histogram(np.hstack((average_x_shower_geant,average_x_shower_gen)), bins=50)[1]
+            ax[2][1].set_ylabel('# entries')
+            ax[2][1].set_xlabel('Average X pos.')
+            ax[2][1].hist(average_x_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[2][1].hist(average_x_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[2][1].set_yscale('log')
+            ax[2][1].legend(loc='upper right')
+
+            print('Plot average hit Y position')
+            bins=np.histogram(np.hstack((average_y_shower_geant,average_y_shower_gen)), bins=50)[1]
+            ax[2][2].set_ylabel('# entries')
+            ax[2][2].set_xlabel('Average Y pos.')
+            ax[2][2].hist(average_y_shower_geant, bins, alpha=0.5, color='orange', label='Geant4')
+            ax[2][2].hist(average_y_shower_gen, bins, alpha=0.5, color='blue', label='Gen')
+            #ax[2][2].set_yscale('log')
+            ax[2][2].legend(loc='upper right')
+
+            fig_name = os.path.join(output_directory, 'Geant_Gen_comparison.png')
+            print(f'Figure name: {fig_name}')
+            fig.savefig(fig_name)
+
+
+
+            # Convert Generated file
+            Converter_ = Convertor.Convertor(plot_file_name, 0.0, preprocessor=args.preprocessor)
+#            Converter_ = Convertor.Convertor(files_list_[0], 0.0, preprocessor=args.preprocessor)
+            Converter_.invert(-99)
+            Converter_.digitize()
+            Converter_.to_h5py(os.path.join(output_directory, 'Gen.h5'))
+            # Convert Reference file: TODO: multifile management
+            Converter_ = Convertor.Convertor(files_list_[0], 0.0, preprocessor=args.preprocessor)
+            Converter_.invert(-99)
+            Converter_.digitize()
+            Converter_.to_h5py(os.path.join(output_directory, 'Reference.h5'))
+
+   
+            os.system('python util/evaluate_image_based.py -m all --output_dir {outdir} --input_file {Gen_file} --reference_file {Geant4_file} --dataset 2'.format(Gen_file = os.path.join(output_directory, 'Gen.h5'), Geant4_file = os.path.join(output_directory, 'Reference.h5'), outdir = os.path.join(output_directory, 'calo_score')))
+            wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'reference_average_shower_dataset_2.png'))})
+            wandb.log({"summary" : wandb.Image(os.path.join(output_directory, 'calo_score', 'average_shower_dataset_2.png'))})
+            wandb.log({"summary":      wandb.Image(os.path.join(output_directory, 'calo_score', 'voxel_energy_dataset_2.png'))})
+
+
 if __name__=='__main__':
 
     usage=''
@@ -693,6 +1023,7 @@ if __name__=='__main__':
 
     args = argparser.parse_args()
 
+    print("bing bong")
     print(args)
     if args.condor == 1: # Use condor to run
       main(args)
@@ -707,8 +1038,8 @@ if __name__=='__main__':
       project_name = cfg_name.split('.')[0].split('_',1)[1]
       print(f'Starting project: {project_name}')
 
-   #   if not os.path.exists(cfg_name):
-   #     cfg_name = os.path.join('../configs', cfg_name)
+      if not os.path.exists(cfg_name):
+        cfg_name = os.path.join('../configs', cfg_name)
 
 
       with open(cfg_name) as ymlfile:
@@ -719,5 +1050,6 @@ if __name__=='__main__':
     # Running from yaml files facilitates submitting (several) jobs to condor
       n_runs = 1
       sweep_id = wandb.sweep(sweep_yml, project="NCSM-"+project_name)
-      wandb.agent(sweep_id, main, count=n_runs)
+      wandb.agent(sweep_id, main(Config(sweep_yml)), count=n_runs)
+
 
